@@ -443,7 +443,7 @@ namespace Ryujinx.HLE.HOS.Services.Am.AppletAE.AllSystemAppletProxiesService.Sys
         // The CPU present runs on the guest's own present thread; it must stay cheap.
         // Disabled until the renderer submits real frames; static (not const) so the
         // disabled path does not trip unreachable-code warnings.
-        private static readonly bool CompositeEnabled = false;
+        private static readonly bool CompositeEnabled = true;
 
         private static void Composite(ServiceCtx context, uint imageId)
         {
