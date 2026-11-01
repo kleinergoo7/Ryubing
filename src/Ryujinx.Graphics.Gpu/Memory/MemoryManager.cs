@@ -1,3 +1,4 @@
+using Ryujinx.Common.Logging;
 using Ryujinx.Common.Memory;
 using Ryujinx.Memory;
 using Ryujinx.Memory.Range;
@@ -30,6 +31,25 @@ namespace Ryujinx.Graphics.Gpu.Memory
         private const int AddressSpaceBits = PtPageBits + PtLvl1Bits + PtLvl0Bits;
 
         public const ulong PteUnmapped = ulong.MaxValue;
+
+        /// <summary>
+        /// NX2 GPU virtual addresses are the process CPU virtual addresses of the same range,
+        /// so unmapped pages resolve to themselves instead of failing.
+        /// Also enables the NX2 hooks: <see cref="Nx2GpuMemory"/> mapping/sparse resolution and
+        /// the queue semaphore page mirror on writes.
+        /// </summary>
+        public bool Nx2IdentityMapping { get; set; }
+
+        /// <summary>
+        /// GPU address of the NX2 syncpoint shim page, or zero when unused.
+        /// Reads of 32-bit values there return live host1x syncpoint counters.
+        /// </summary>
+        public ulong Nx2SyncpointShim { get; set; }
+
+        /// <summary>
+        /// Reads a host1x syncpoint counter for the NX2 syncpoint shim.
+        /// </summary>
+        public Func<uint, uint> Nx2SyncpointReader { get; set; }
 
         private readonly ulong[][] _pageTable;
 
@@ -88,6 +108,23 @@ namespace Ryujinx.Graphics.Gpu.Memory
         {
             int size = Unsafe.SizeOf<T>();
 
+            if (size == sizeof(uint) && Nx2SyncpointShim != 0 && Nx2SyncpointReader != null)
+            {
+                ulong shimOffset = va - Nx2SyncpointShim;
+
+                if (va >= Nx2SyncpointShim && shimOffset < 192 * sizeof(uint) && (shimOffset & 3) == 0)
+                {
+                    uint value = Nx2SyncpointReader((uint)(shimOffset / sizeof(uint)));
+
+                    return Unsafe.As<uint, T>(ref value);
+                }
+            }
+
+            if (Nx2IdentityMapping && Nx2GpuMemory.IsSparse(va) && Nx2GpuMemory.TryReadSparse(va, out T sparseValue))
+            {
+                return sparseValue;
+            }
+
             if (IsContiguous(va, size))
             {
                 ulong address = Translate(va);
@@ -120,6 +157,15 @@ namespace Ryujinx.Graphics.Gpu.Memory
         /// <returns>The span of the data at the specified memory location</returns>
         public ReadOnlySpan<byte> GetSpan(ulong va, int size, bool tracked = false)
         {
+            if (Nx2IdentityMapping && Nx2GpuMemory.IsSparse(va))
+            {
+                Span<byte> sparse = new byte[size];
+
+                Nx2GpuMemory.TryReadSparse(va, sparse);
+
+                return sparse;
+            }
+
             if (IsContiguous(va, size))
             {
                 return Physical.GetSpan(Translate(va), size, tracked);
@@ -144,6 +190,11 @@ namespace Ryujinx.Graphics.Gpu.Memory
         /// <returns>The span of the data at the specified memory location</returns>
         public ReadOnlySpan<byte> GetSpanMapped(ulong va, int size, bool tracked = false)
         {
+            if (Nx2IdentityMapping && Nx2GpuMemory.IsSparse(va))
+            {
+                return GetSpan(va, size, tracked);
+            }
+
             bool isContiguous = true;
             int mappedSize;
 
@@ -246,6 +297,17 @@ namespace Ryujinx.Graphics.Gpu.Memory
         /// <returns>A writable region with the data at the specified memory location</returns>
         public WritableRegion GetWritableRegion(ulong va, int size, bool tracked = false)
         {
+            if (Nx2IdentityMapping && Nx2GpuMemory.IsSparse(va))
+            {
+                MemoryOwner<byte> sparseOwner = MemoryOwner<byte>.Rent(size);
+
+                Nx2GpuMemory.TryReadSparse(va, sparseOwner.Span);
+
+                // Dispose writes the copy back through Write/WriteUntracked, which lands in the
+                // sparse region again.
+                return new WritableRegion(this, va, sparseOwner, tracked);
+            }
+
             if (IsContiguous(va, size))
             {
                 return Physical.GetWritableRegion(Translate(va), size, tracked);
@@ -309,6 +371,16 @@ namespace Ryujinx.Graphics.Gpu.Memory
         /// <param name="writeCallback">Write callback</param>
         private void WriteImpl(ulong va, ReadOnlySpan<byte> data, WriteCallback writeCallback)
         {
+            if (Nx2IdentityMapping)
+            {
+                if (Nx2GpuMemory.IsSparse(va) && Nx2GpuMemory.TryWriteSparse(va, data))
+                {
+                    return;
+                }
+
+                MirrorSemaphores(va, data, writeCallback);
+            }
+
             if (IsContiguous(va, data.Length))
             {
                 writeCallback(Translate(va), data);
@@ -336,6 +408,34 @@ namespace Ryujinx.Graphics.Gpu.Memory
 
                     writeCallback(pa, data.Slice(offset, size));
                 }
+            }
+        }
+
+        /// <summary>
+        /// Mirrors GPU writes into the second page of a queue semaphore region to the first page.
+        /// The guest queues release into page two and wait on page one at the same offset.
+        /// </summary>
+        /// <param name="va">GPU virtual address of the write</param>
+        /// <param name="data">Data written</param>
+        /// <param name="writeCallback">Write callback to use for the mirror</param>
+        private void MirrorSemaphores(ulong va, ReadOnlySpan<byte> data, WriteCallback writeCallback)
+        {
+            ReadOnlySpan<ulong> regions = Nx2GpuMemory.SemaphoreRegions;
+
+            for (int i = 0; i < regions.Length; i++)
+            {
+                ulong second = regions[i] + 0x1000;
+                ulong end = va + (ulong)data.Length;
+
+                if (va >= second + 0x1000 || end <= second)
+                {
+                    continue;
+                }
+
+                ulong from = Math.Max(va, second);
+                ulong to = Math.Min(end, second + 0x1000);
+
+                writeCallback(Translate(from - 0x1000), data.Slice((int)(from - va), (int)(to - from)));
             }
         }
 
@@ -576,12 +676,29 @@ namespace Ryujinx.Graphics.Gpu.Memory
 
             ulong pte = GetPte(va);
 
-            if (pte == PteUnmapped)
+            if (pte != PteUnmapped)
+            {
+                return UnpackPaFromPte(pte) + (va & PageMask);
+            }
+
+            if (!Nx2IdentityMapping)
             {
                 return PteUnmapped;
             }
 
-            return UnpackPaFromPte(pte) + (va & PageMask);
+            // Sparse regions are host allocations, not guest memory: the direct read/write paths
+            // in this class handle them, and everything else sees them as unmapped.
+            if (Nx2GpuMemory.IsSparse(va))
+            {
+                return PteUnmapped;
+            }
+
+            if (Nx2GpuMemory.TryResolveMapping(va, out ulong mapped))
+            {
+                return mapped + (va & PageMask);
+            }
+
+            return va;
         }
 
         /// <summary>
@@ -733,6 +850,634 @@ namespace Ryujinx.Graphics.Gpu.Memory
         private static ulong UnpackPaFromPte(ulong pte)
         {
             return pte & 0xffffffffffffffUL;
+        }
+    }
+
+    /// <summary>
+    /// Registry of GPU accessible memory created through the Switch 2 nx2:gpu session.
+    /// The GPU memory manager consults it when a GPU virtual address has no page table entry of
+    /// its own, and routes reads/writes of sparse (GPU only) regions to their host backing.
+    /// Shared by every memory manager of the emulation session; a title's GPU virtual addresses
+    /// are unique, so a single registry is enough (one game at a time).
+    /// </summary>
+    public static class Nx2GpuMemory
+    {
+        /// <summary>
+        /// Virtual size that sparse regions may reserve. Pages are committed by the host only
+        /// when touched, so most of a large region costs address space, not RAM. Past the limit a
+        /// region stays unbacked (reads zero, writes dropped) instead of failing the emulator.
+        /// </summary>
+        public const ulong SparseBudget = 64UL << 30;
+
+        // Sparse regions reserve address space only; host memory is committed in chunks on the
+        // first write, so a mostly empty region costs almost nothing.
+        private const ulong SparseChunkSize = 1UL << 20;
+        private const ulong SparseCommitBudget = 6UL << 30;
+
+        /// <summary>
+        /// A registered region of this size holds queue semaphores: page two is written by the
+        /// GPU and mirrored to page one.
+        /// </summary>
+        public const ulong SemaphoreRegionSize = 0x2000;
+
+        private sealed class MemoryEntry
+        {
+            public ulong Start;
+            public ulong Size;
+        }
+
+        private sealed class MappingEntry
+        {
+            public ulong GpuStart;
+            public ulong GpuSize;
+            public ulong CpuStart;
+        }
+
+        private sealed class SparseEntry
+        {
+            public ulong Start;
+            public ulong Size;
+            public readonly Dictionary<ulong, MemoryBlock> Chunks = [];
+        }
+
+        private static readonly object _lock = new();
+        private static readonly Dictionary<uint, MemoryEntry> _memories = [];
+        private static readonly List<MappingEntry> _mappings = [];
+        private static readonly Dictionary<ulong, SparseEntry> _sparse = [];
+        private static readonly List<ulong> _semaphores = [];
+
+        // Snapshots for the lock free GPU side lookups. Rebuilt under _lock on every change.
+        private static volatile MappingEntry[] _mappingSnapshot = [];
+        private static volatile SparseEntry[] _sparseSnapshot = [];
+        private static volatile ulong[] _semaphoreSnapshot = [];
+
+        private static ulong _sparseBytes;
+        private static ulong _sparseCommitted;
+        private static ulong _sparseDropped;
+
+        public static ulong SparseCommitted => _sparseCommitted;
+        public static ulong SparseDropped => _sparseDropped;
+        private static uint _nextHandle = 1;
+
+        /// <summary>
+        /// GPU virtual address of the queue semaphore regions registered so far.
+        /// </summary>
+        public static ReadOnlySpan<ulong> SemaphoreRegions => _semaphoreSnapshot;
+
+        /// <summary>
+        /// Registers a GPU accessible memory range (nx2:gpu 101).
+        /// </summary>
+        /// <param name="start">Start of the range (CPU and GPU address)</param>
+        /// <param name="size">Size in bytes of the range</param>
+        /// <returns>The memory handle, or 0 if the range is invalid</returns>
+        public static uint Register(ulong start, ulong size)
+        {
+            if (size == 0 || start + size < start)
+            {
+                return 0;
+            }
+
+            lock (_lock)
+            {
+                uint handle = _nextHandle++;
+
+                if (handle == 0)
+                {
+                    handle = _nextHandle++;
+                }
+
+                _memories[handle] = new MemoryEntry { Start = start, Size = size };
+
+                if (size == SemaphoreRegionSize)
+                {
+                    AddSemaphoreLocked(start);
+                }
+
+                // Registering implies the mapping at its own address (identity), like the graphic
+                // server does on the console.
+                MapLocked(start, start, size);
+
+                return handle;
+            }
+        }
+
+        /// <summary>
+        /// Destroys a registered memory range (nx2:gpu 102): its mappings and semaphore record go
+        /// with it. The identity fallback can still resolve the guest range afterwards.
+        /// </summary>
+        /// <param name="handle">Handle returned by <see cref="Register"/></param>
+        /// <returns>True if the handle was known</returns>
+        public static bool Destroy(uint handle)
+        {
+            lock (_lock)
+            {
+                if (!_memories.Remove(handle, out MemoryEntry memory))
+                {
+                    return false;
+                }
+
+                UnmapLocked(memory.Start, memory.Size);
+
+                if (memory.Size == SemaphoreRegionSize)
+                {
+                    RemoveSemaphoreLocked(memory.Start);
+                }
+
+                return true;
+            }
+        }
+
+        /// <summary>
+        /// Maps a registered memory range at a GPU virtual address (nx2:gpu 211).
+        /// </summary>
+        /// <param name="gpuStart">First GPU virtual address of the mapping</param>
+        /// <param name="gpuSize">Size in bytes of the mapping</param>
+        /// <param name="handle">Handle of the memory the mapping comes from</param>
+        /// <param name="offset">Offset in bytes into the registered memory</param>
+        /// <returns>True if the mapping was recorded</returns>
+        public static bool Map(ulong gpuStart, ulong gpuSize, uint handle, ulong offset)
+        {
+            if (gpuSize == 0 || gpuStart + gpuSize < gpuStart || gpuSize > long.MaxValue)
+            {
+                return false;
+            }
+
+            lock (_lock)
+            {
+                if (!_memories.TryGetValue(handle, out MemoryEntry memory) || offset >= memory.Size)
+                {
+                    return false;
+                }
+
+                ulong available = memory.Size - offset;
+
+                if (gpuSize > available)
+                {
+                    gpuSize = available;
+                }
+
+                MapLocked(gpuStart, memory.Start + offset, gpuSize);
+
+                return true;
+            }
+        }
+
+        /// <summary>
+        /// Drops the mapping of a GPU virtual address range (nx2:gpu 213).
+        /// </summary>
+        /// <param name="gpuStart">First GPU virtual address to unmap</param>
+        /// <param name="gpuSize">Size in bytes to unmap</param>
+        public static void Unmap(ulong gpuStart, ulong gpuSize)
+        {
+            if (gpuSize == 0 || gpuStart + gpuSize < gpuStart)
+            {
+                return;
+            }
+
+            lock (_lock)
+            {
+                UnmapLocked(gpuStart, gpuSize);
+            }
+        }
+
+        /// <summary>
+        /// Creates a sparse (GPU only) region backed by host memory (nx2:gpu 214).
+        /// A region already present at the same address is replaced.
+        /// </summary>
+        /// <param name="start">Start GPU virtual address, page aligned</param>
+        /// <param name="size">Size in bytes, page aligned</param>
+        /// <returns>True if the region was created</returns>
+        public static bool CreateSparse(ulong start, ulong size)
+        {
+            if (size == 0 || start + size < start ||
+                (start & MemoryManager.PageMask) != 0 || (size & MemoryManager.PageMask) != 0)
+            {
+                return false;
+            }
+
+            lock (_lock)
+            {
+                if (_sparse.TryGetValue(start, out SparseEntry existing))
+                {
+                    DestroySparseLocked(existing);
+                }
+
+                foreach (SparseEntry region in _sparse.Values)
+                {
+                    if (start < region.Start + region.Size && region.Start < start + size)
+                    {
+                        return false;
+                    }
+                }
+
+                if (size <= SparseBudget - _sparseBytes)
+                {
+                    _sparseBytes += size;
+                }
+                else
+                {
+                    Logger.Warning?.Print(LogClass.Gpu,
+                        $"NX2 sparse region 0x{start:X} (0x{size:X} bytes) exceeds the virtual budget, writes dropped");
+                }
+
+                _sparse[start] = new SparseEntry { Start = start, Size = size };
+                RebuildSparseLocked();
+
+                return true;
+            }
+        }
+
+        /// <summary>
+        /// Destroys a sparse region (nx2:gpu 215) and frees its host backing.
+        /// </summary>
+        /// <param name="start">Start GPU virtual address</param>
+        /// <returns>True if a sparse region started there</returns>
+        public static bool DestroySparse(ulong start)
+        {
+            lock (_lock)
+            {
+                if (!_sparse.TryGetValue(start, out SparseEntry region))
+                {
+                    return false;
+                }
+
+                DestroySparseLocked(region);
+                RebuildSparseLocked();
+
+                return true;
+            }
+        }
+
+        /// <summary>
+        /// Checks if a GPU virtual address lies in a sparse region.
+        /// </summary>
+        /// <param name="va">GPU virtual address</param>
+        /// <returns>True if the address is sparse</returns>
+        public static bool IsSparse(ulong va)
+        {
+            SparseEntry[] entries = _sparseSnapshot;
+
+            if (entries.Length == 0)
+            {
+                return false;
+            }
+
+            int index = FindStart(entries, va);
+
+            return index >= 0 && va - entries[index].Start < entries[index].Size;
+        }
+
+        /// <summary>
+        /// Resolves a GPU virtual address through the recorded nx2:gpu mappings.
+        /// </summary>
+        /// <param name="va">GPU virtual address</param>
+        /// <param name="cpuAddress">CPU address the page is mapped to</param>
+        /// <returns>True if a mapping covers the address</returns>
+        public static bool TryResolveMapping(ulong va, out ulong cpuAddress)
+        {
+            MappingEntry[] entries = _mappingSnapshot;
+
+            int index = entries.Length == 0 ? -1 : FindStart(entries, va);
+
+            if (index >= 0 && va - entries[index].GpuStart < entries[index].GpuSize)
+            {
+                cpuAddress = entries[index].CpuStart + (va - entries[index].GpuStart);
+
+                return true;
+            }
+
+            cpuAddress = 0;
+
+            return false;
+        }
+
+        /// <summary>
+        /// Reads a value from a sparse region. Addresses outside every region are not handled.
+        /// </summary>
+        /// <typeparam name="T">Type of the value</typeparam>
+        /// <param name="va">GPU virtual address</param>
+        /// <param name="value">Value read, or zero when the region has no backing</param>
+        /// <returns>True if the address is in a sparse region</returns>
+        public static unsafe bool TryReadSparse<T>(ulong va, out T value) where T : unmanaged
+        {
+            int size = Unsafe.SizeOf<T>();
+
+            lock (_lock)
+            {
+                SparseEntry region = FindSparseLocked(va, (ulong)size);
+
+                if (region == null)
+                {
+                    value = default;
+
+                    return false;
+                }
+
+                ulong offset = va - region.Start;
+                ulong inChunk = offset % SparseChunkSize;
+                MemoryBlock chunk = GetChunkLocked(region, offset, false);
+
+                value = chunk == null
+                    ? default
+                    : Unsafe.ReadUnaligned<T>((byte*)chunk.Pointer + inChunk);
+
+                return true;
+            }
+        }
+
+        /// <summary>
+        /// Reads from a sparse region into a span. Bytes past the end of the region read as zero.
+        /// </summary>
+        /// <param name="va">GPU virtual address</param>
+        /// <param name="data">Destination span</param>
+        /// <returns>True if the address is in a sparse region</returns>
+        public static unsafe bool TryReadSparse(ulong va, Span<byte> data)
+        {
+            lock (_lock)
+            {
+                SparseEntry region = FindSparseLocked(va, (ulong)data.Length);
+
+                if (region == null)
+                {
+                    return false;
+                }
+
+                ulong available = region.Size - (va - region.Start);
+                int size = (int)Math.Min((ulong)data.Length, available);
+
+                CopyFromChunks(region, va - region.Start, data[..size]);
+
+                data[size..].Clear();
+
+                return true;
+            }
+        }
+
+        /// <summary>
+        /// Writes into a sparse region. Bytes past the end of the region are dropped.
+        /// </summary>
+        /// <param name="va">GPU virtual address</param>
+        /// <param name="data">Data to write</param>
+        /// <returns>True if the address is in a sparse region</returns>
+        public static unsafe bool TryWriteSparse(ulong va, ReadOnlySpan<byte> data)
+        {
+            lock (_lock)
+            {
+                SparseEntry region = FindSparseLocked(va, (ulong)data.Length);
+
+                if (region == null)
+                {
+                    return false;
+                }
+
+                ulong available = region.Size - (va - region.Start);
+                int size = (int)Math.Min((ulong)data.Length, available);
+
+                CopyToChunks(region, va - region.Start, data[..size]);
+
+                return true;
+            }
+        }
+
+        private static void MapLocked(ulong gpuStart, ulong cpuStart, ulong size)
+        {
+            TrimMappingsLocked(gpuStart, size);
+
+            _mappings.Add(new MappingEntry { GpuStart = gpuStart, CpuStart = cpuStart, GpuSize = size });
+            RebuildMappingsLocked();
+        }
+
+        private static void UnmapLocked(ulong gpuStart, ulong size)
+        {
+            TrimMappingsLocked(gpuStart, size);
+            RebuildMappingsLocked();
+        }
+
+        // Drops [gpuStart, +size) from the recorded mappings, keeping the parts outside it.
+        private static void TrimMappingsLocked(ulong gpuStart, ulong size)
+        {
+            ulong end = gpuStart + size;
+            List<MappingEntry> kept = new(_mappings.Count + 1);
+
+            foreach (MappingEntry mapping in _mappings)
+            {
+                ulong mappingEnd = mapping.GpuStart + mapping.GpuSize;
+
+                if (mappingEnd <= gpuStart || mapping.GpuStart >= end)
+                {
+                    kept.Add(mapping);
+                    continue;
+                }
+
+                if (mapping.GpuStart < gpuStart)
+                {
+                    kept.Add(new MappingEntry
+                    {
+                        GpuStart = mapping.GpuStart,
+                        CpuStart = mapping.CpuStart,
+                        GpuSize = gpuStart - mapping.GpuStart,
+                    });
+                }
+
+                if (mappingEnd > end)
+                {
+                    kept.Add(new MappingEntry
+                    {
+                        GpuStart = end,
+                        CpuStart = mapping.CpuStart + (end - mapping.GpuStart),
+                        GpuSize = mappingEnd - end,
+                    });
+                }
+            }
+
+            _mappings.Clear();
+            _mappings.AddRange(kept);
+        }
+
+        private static void RebuildMappingsLocked()
+        {
+            _mappings.Sort((a, b) => a.GpuStart.CompareTo(b.GpuStart));
+            _mappingSnapshot = _mappings.ToArray();
+        }
+
+        private static void DestroySparseLocked(SparseEntry region)
+        {
+            _sparse.Remove(region.Start);
+
+            _sparseBytes -= region.Size;
+
+            foreach (MemoryBlock chunk in region.Chunks.Values)
+            {
+                _sparseCommitted -= SparseChunkSize;
+                chunk.Dispose();
+            }
+
+            region.Chunks.Clear();
+        }
+
+        private static void RebuildSparseLocked()
+        {
+            SparseEntry[] entries = new SparseEntry[_sparse.Count];
+            _sparse.Values.CopyTo(entries, 0);
+            Array.Sort(entries, (a, b) => a.Start.CompareTo(b.Start));
+            _sparseSnapshot = entries;
+        }
+
+        private static SparseEntry FindSparseLocked(ulong va, ulong size)
+        {
+            SparseEntry[] entries = _sparseSnapshot;
+            int index = entries.Length == 0 ? -1 : FindStart(entries, va);
+
+            if (index < 0)
+            {
+                return null;
+            }
+
+            SparseEntry region = entries[index];
+
+            if (va - region.Start > region.Size || size > region.Size - (va - region.Start))
+            {
+                return null;
+            }
+
+            return region;
+        }
+
+        private static MemoryBlock GetChunkLocked(SparseEntry region, ulong offset, bool create)
+        {
+            ulong index = offset / SparseChunkSize;
+
+            if (region.Chunks.TryGetValue(index, out MemoryBlock chunk))
+            {
+                return chunk;
+            }
+
+            if (!create || SparseChunkSize > SparseCommitBudget - _sparseCommitted)
+            {
+                return null;
+            }
+
+            chunk = new MemoryBlock((long)SparseChunkSize);
+
+            region.Chunks[index] = chunk;
+            _sparseCommitted += SparseChunkSize;
+
+            return chunk;
+        }
+
+        private static unsafe void CopyFromChunks(SparseEntry region, ulong offset, Span<byte> data)
+        {
+            int done = 0;
+
+            while (done < data.Length)
+            {
+                ulong position = offset + (ulong)done;
+                ulong inChunk = position % SparseChunkSize;
+                int take = (int)Math.Min((ulong)(data.Length - done), SparseChunkSize - inChunk);
+                MemoryBlock chunk = GetChunkLocked(region, position, false);
+
+                if (chunk == null)
+                {
+                    data.Slice(done, take).Clear();
+                }
+                else
+                {
+                    new ReadOnlySpan<byte>((byte*)chunk.Pointer + inChunk, take).CopyTo(data.Slice(done, take));
+                }
+
+                done += take;
+            }
+        }
+
+        private static unsafe void CopyToChunks(SparseEntry region, ulong offset, ReadOnlySpan<byte> data)
+        {
+            int done = 0;
+
+            while (done < data.Length)
+            {
+                ulong position = offset + (ulong)done;
+                ulong inChunk = position % SparseChunkSize;
+                int take = (int)Math.Min((ulong)(data.Length - done), SparseChunkSize - inChunk);
+                MemoryBlock chunk = GetChunkLocked(region, position, true);
+
+                if (chunk != null)
+                {
+                    data.Slice(done, take).CopyTo(new Span<byte>((byte*)chunk.Pointer + inChunk, take));
+                }
+                else
+                {
+                    System.Threading.Interlocked.Add(ref _sparseDropped, (ulong)take);
+                }
+
+                done += take;
+            }
+        }
+
+        private static void AddSemaphoreLocked(ulong start)
+        {
+            if (!_semaphores.Contains(start))
+            {
+                _semaphores.Add(start);
+                _semaphoreSnapshot = _semaphores.ToArray();
+            }
+        }
+
+        private static void RemoveSemaphoreLocked(ulong start)
+        {
+            if (_semaphores.Remove(start))
+            {
+                _semaphoreSnapshot = _semaphores.ToArray();
+            }
+        }
+
+        // Index of the last entry with Start <= address, or -1 when there is none.
+        private static int FindStart(SparseEntry[] entries, ulong address)
+        {
+            int low = 0;
+            int high = entries.Length - 1;
+            int found = -1;
+
+            while (low <= high)
+            {
+                int middle = low + ((high - low) >> 1);
+
+                if (entries[middle].Start <= address)
+                {
+                    found = middle;
+                    low = middle + 1;
+                }
+                else
+                {
+                    high = middle - 1;
+                }
+            }
+
+            return found;
+        }
+
+        // Index of the last entry with GpuStart <= address, or -1 when there is none.
+        private static int FindStart(MappingEntry[] entries, ulong address)
+        {
+            int low = 0;
+            int high = entries.Length - 1;
+            int found = -1;
+
+            while (low <= high)
+            {
+                int middle = low + ((high - low) >> 1);
+
+                if (entries[middle].GpuStart <= address)
+                {
+                    found = middle;
+                    low = middle + 1;
+                }
+                else
+                {
+                    high = middle - 1;
+                }
+            }
+
+            return found;
         }
     }
 }

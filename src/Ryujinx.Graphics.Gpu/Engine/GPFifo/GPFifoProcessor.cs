@@ -22,7 +22,21 @@ namespace Ryujinx.Graphics.Gpu.Engine.GPFifo
         private const int LoadInlineDataMethodOffset = 0x6d;
         private const int UniformBufferUpdateDataMethodOffset = 0x8e4;
 
+        private const int SubChannelCount = 5;
+
+        private readonly GpuContext _context;
         private readonly GpuChannel _channel;
+
+        // Engine each subchannel is bound to, for Switch 2 streams. Ampere binds object classes
+        // rather than the Maxwell engine IDs; values are indices into the dispatch switch below.
+        private const int Engine3D = 0;
+        private const int EngineCompute = 1;
+        private const int EngineInlineToMemory = 2;
+        private const int Engine2D = 3;
+        private const int EngineDma = 4;
+        private const int EngineFifo = 5;
+
+        private readonly int[] _subChannelEngine = new int[SubChannelCount];
 
         /// <summary>
         /// Channel memory manager.
@@ -33,6 +47,21 @@ namespace Ryujinx.Graphics.Gpu.Engine.GPFifo
         /// Channel texture manager.
         /// </summary>
         public TextureManager TextureManager => _channel.TextureManager;
+
+        /// <summary>
+        /// Per-channel MME data RAM, used by the Switch 2 (Turing+) macro engine.
+        /// </summary>
+        public int[] MmeDataRam => _fifoClass.MmeDataRam;
+
+        /// <summary>
+        /// Counter that changes when macro code is uploaded on this channel.
+        /// </summary>
+        public long MmeCodeGeneration => _fifoClass.MmeCodeGeneration;
+
+        /// <summary>
+        /// Counter that changes when compute macro code is uploaded on this channel.
+        /// </summary>
+        public long ComputeMmeCodeGeneration => _fifoClass.ComputeMmeCodeGeneration;
 
         /// <summary>
         /// 3D Engine.
@@ -68,11 +97,17 @@ namespace Ryujinx.Graphics.Gpu.Engine.GPFifo
         /// <param name="channel">Channel that the GPFIFO processor belongs to</param>
         public GPFifoProcessor(GpuContext context, GpuChannel channel)
         {
+            _context = context;
             _channel = channel;
+
+            for (int index = 0; index < _subChannelEngine.Length; index++)
+            {
+                _subChannelEngine[index] = index;
+            }
 
             _fifoClass = new GPFifoClass(context, this);
             _3dClass = new ThreedClass(context, channel, _fifoClass);
-            _computeClass = new ComputeClass(context, channel, _3dClass);
+            _computeClass = new ComputeClass(context, channel, _3dClass, _fifoClass);
             _i2mClass = new InlineToMemoryClass(context, channel);
             _2dClass = new TwodClass(channel);
             _dmaClass = new DmaClass(context, channel, _3dClass);
@@ -216,6 +251,11 @@ namespace Ryujinx.Graphics.Gpu.Engine.GPFifo
         /// <param name="meth">Method to be processed</param>
         private void Send(ulong gpuVa, int offset, int argument, int subChannel, bool isLastCall)
         {
+            if (offset == 0)
+            {
+                BindObject(subChannel, argument);
+            }
+
             if (offset < 0x60)
             {
                 _fifoClass.Write(offset * 4, argument);
@@ -224,55 +264,136 @@ namespace Ryujinx.Graphics.Gpu.Engine.GPFifo
             {
                 offset *= 4;
 
-                switch (subChannel)
+                switch (SubChannelEngine(subChannel))
                 {
-                    case 0:
+                    case Engine3D:
                         _3dClass.Write(offset, argument);
                         break;
-                    case 1:
+                    case EngineCompute:
                         _computeClass.Write(offset, argument);
                         break;
-                    case 2:
+                    case EngineInlineToMemory:
                         _i2mClass.Write(offset, argument);
                         break;
-                    case 3:
+                    case Engine2D:
                         _2dClass.Write(offset, argument);
                         break;
-                    case 4:
+                    case EngineDma:
                         _dmaClass.Write(offset, argument);
+                        break;
+                    case EngineFifo:
+                        _fifoClass.Write(offset, argument);
                         break;
                 }
             }
             else
             {
-                IDeviceState state = subChannel switch
+                int engine = SubChannelEngine(subChannel);
+
+                IDeviceState state = engine switch
                 {
-                    0 => _3dClass,
-                    3 => _2dClass,
+                    Engine3D => _3dClass,
+                    EngineCompute => _context.IsNx2Ampere ? _computeClass : null,
+                    Engine2D => _2dClass,
                     _ => null,
                 };
 
                 if (state != null)
                 {
                     int macroIndex = (offset >> 1) & MacroIndexMask;
+                    bool compute = engine == EngineCompute;
 
                     if ((offset & 1) != 0)
                     {
-                        _fifoClass.MmePushArgument(macroIndex, gpuVa, argument);
+                        if (compute)
+                        {
+                            _fifoClass.ComputeMmePushArgument(macroIndex, gpuVa, argument);
+                        }
+                        else
+                        {
+                            _fifoClass.MmePushArgument(macroIndex, gpuVa, argument);
+                        }
                     }
                     else
                     {
-                        _fifoClass.MmeStart(macroIndex, argument);
+                        if (compute)
+                        {
+                            _fifoClass.ComputeMmeStart(macroIndex, argument);
+                        }
+                        else
+                        {
+                            _fifoClass.MmeStart(macroIndex, argument);
+                        }
                     }
 
                     if (isLastCall)
                     {
-                        _fifoClass.CallMme(macroIndex, state);
+                        if (compute)
+                        {
+                            _fifoClass.ComputeCallMme(macroIndex, state);
+                        }
+                        else
+                        {
+                            _fifoClass.CallMme(macroIndex, state);
+                        }
 
                         _3dClass.PerformDeferredDraws();
                     }
                 }
             }
+        }
+
+        /// <summary>
+        /// Binds a subchannel to the engine selected by an object class.
+        /// </summary>
+        /// <param name="subChannel">Subchannel being bound</param>
+        /// <param name="argument">Class ID (and engine ID in the upper bits)</param>
+        private void BindObject(int subChannel, int argument)
+        {
+            if (!_context.IsNx2Ampere || (uint)subChannel >= SubChannelCount)
+            {
+                return;
+            }
+
+            // Switch 2 binds Ampere object classes. They share the Maxwell method layout, so the
+            // existing engines process them; only the class-to-engine mapping differs.
+            int classId = argument & 0xffff;
+
+            if (classId == 0)
+            {
+                // Class 0 unbinds the subchannel. -1 matches no engine, so its calls are dropped.
+                _subChannelEngine[subChannel] = -1;
+                return;
+            }
+
+            _subChannelEngine[subChannel] = classId switch
+            {
+                0xc797 => Engine3D,        // AMPERE_B
+                0xc7c0 => EngineCompute,   // AMPERE_COMPUTE_B
+                0xc7b5 => EngineDma,       // AMPERE_DMA_COPY_B
+                0xc56f => EngineFifo,      // AMPERE_CHANNEL_GPFIFO_A
+                _ => subChannel,           // unknown class: keep the legacy mapping
+            };
+        }
+
+        /// <summary>
+        /// Gets the engine index a subchannel currently dispatches to, or -1 when unbound.
+        /// </summary>
+        private int SubChannelEngine(int subChannel)
+        {
+            if ((uint)subChannel >= SubChannelCount)
+            {
+                return subChannel;
+            }
+
+            int engine = _subChannelEngine[subChannel];
+
+            if (engine == -1)
+            {
+                return EngineFifo + 1; // No matching case: drop the call.
+            }
+
+            return engine;
         }
 
         /// <summary>

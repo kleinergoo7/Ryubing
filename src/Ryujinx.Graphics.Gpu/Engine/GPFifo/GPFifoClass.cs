@@ -27,6 +27,35 @@ namespace Ryujinx.Graphics.Gpu.Engine.GPFifo
         private readonly Macro[] _macros;
         private readonly int[] _macroCode;
 
+        // Switch 2 compute streams upload their own macro code and start addresses through
+        // compute methods 0x45-0x48, separately from the 3D/fifo MME.
+        private readonly Macro[] _computeMacros = new Macro[MacrosCount];
+        private readonly int[] _computeMacroCode = new int[MacroCodeSize];
+        private int _computeCodeWriteOffset;
+        private int _computeStartPointer;
+        private long _computeCodeGeneration;
+
+        // Switch 2 (Turing+) MME keeps a per-channel data RAM, addressed by the macro DREAD/DWRITE
+        // operations. Each channel owns one; a channel's 3D and compute macros share it.
+        private readonly int[] _mmeDataRam = new int[0xc00];
+        private int _mmeCodeWriteOffset;
+        private long _mmeCodeGeneration;
+
+        /// <summary>
+        /// Per-channel MME data RAM.
+        /// </summary>
+        public int[] MmeDataRam => _mmeDataRam;
+
+        /// <summary>
+        /// Counter that changes whenever macro code is uploaded, for memo invalidation.
+        /// </summary>
+        public long MmeCodeGeneration => _mmeCodeGeneration;
+
+        /// <summary>
+        /// Counter that changes when compute macro code is uploaded, for memo invalidation.
+        /// </summary>
+        public long ComputeMmeCodeGeneration => _computeCodeGeneration;
+
         /// <summary>
         /// Creates a new instance of the GPU General Purpose FIFO class.
         /// </summary>
@@ -43,6 +72,7 @@ namespace Ryujinx.Graphics.Gpu.Engine.GPFifo
                 { nameof(GPFifoClassState.WaitForIdle), new RwCallback(WaitForIdle, null) },
                 { nameof(GPFifoClassState.SetReference), new RwCallback(SetReference, null) },
                 { nameof(GPFifoClassState.LoadMmeInstructionRam), new RwCallback(LoadMmeInstructionRam, null) },
+                { nameof(GPFifoClassState.LoadMmeInstructionRamPointer), new RwCallback(LoadMmeInstructionRamPointer, null) },
                 { nameof(GPFifoClassState.LoadMmeStartAddressRam), new RwCallback(LoadMmeStartAddressRam, null) },
                 { nameof(GPFifoClassState.SetMmeShadowRamControl), new RwCallback(SetMmeShadowRamControl, null) },
             });
@@ -196,7 +226,34 @@ namespace Ryujinx.Graphics.Gpu.Engine.GPFifo
         /// <param name="argument">Method call argument</param>
         public void LoadMmeInstructionRam(int argument)
         {
+            if (_context.IsNx2Ampere)
+            {
+                // Turing+ instructions are 96 bits (three words). The SDK addresses code by
+                // instruction index, so a sequence of three writes stores one instruction.
+                if (_mmeCodeWriteOffset < _macroCode.Length)
+                {
+                    _macroCode[_mmeCodeWriteOffset++] = argument;
+                    _mmeCodeGeneration++;
+                }
+
+                return;
+            }
+
             _macroCode[_state.State.LoadMmeInstructionRamPointer++] = argument;
+        }
+
+        /// <summary>
+        /// Sets the MME instruction write pointer.
+        /// </summary>
+        /// <param name="argument">Method call argument</param>
+        public void LoadMmeInstructionRamPointer(int argument)
+        {
+            if (_context.IsNx2Ampere)
+            {
+                // The pointer register names an instruction index; the code array is word packed.
+                _mmeCodeWriteOffset = Math.Min(argument, _macroCode.Length / 3) * 3;
+                _mmeCodeGeneration++;
+            }
         }
 
         /// <summary>
@@ -246,6 +303,74 @@ namespace Ryujinx.Graphics.Gpu.Engine.GPFifo
         public void CallMme(int index, IDeviceState state)
         {
             _macros[index].Execute(_macroCode, state);
+        }
+
+        /// <summary>
+        /// Clears (sets the write position of) the compute MME code.
+        /// </summary>
+        /// <param name="argument">Instruction index to write at</param>
+        public void KeepComputeMmeCode(int argument)
+        {
+            _computeCodeWriteOffset = Math.Min(argument, _computeMacroCode.Length / 3) * 3;
+            _computeCodeGeneration++;
+        }
+
+        /// <summary>
+        /// Appends a word to the compute MME code.
+        /// </summary>
+        /// <param name="argument">Code word</param>
+        public void AddComputeMmeCode(int argument)
+        {
+            if (_computeCodeWriteOffset < _computeMacroCode.Length)
+            {
+                _computeMacroCode[_computeCodeWriteOffset++] = argument;
+                _computeCodeGeneration++;
+            }
+        }
+
+        /// <summary>
+        /// Sets the compute MME start address bind pointer.
+        /// </summary>
+        /// <param name="argument">Macro slot index</param>
+        public void SetComputeMmeBindPointer(int argument)
+        {
+            _computeStartPointer = argument;
+        }
+
+        /// <summary>
+        /// Binds a compute macro start address.
+        /// </summary>
+        /// <param name="argument">Instruction index where the macro starts</param>
+        public void BindComputeMmeStart(int argument)
+        {
+            if ((uint)_computeStartPointer < MacrosCount)
+            {
+                _computeMacros[_computeStartPointer++] = new Macro(argument);
+            }
+        }
+
+        /// <summary>
+        /// Pushes an argument to a compute macro.
+        /// </summary>
+        public void ComputeMmePushArgument(int index, ulong gpuVa, int argument)
+        {
+            _computeMacros[index].PushArgument(gpuVa, argument);
+        }
+
+        /// <summary>
+        /// Prepares a compute macro for execution.
+        /// </summary>
+        public void ComputeMmeStart(int index, int argument)
+        {
+            _computeMacros[index].StartExecution(_context, _parent, _computeMacroCode, argument, true);
+        }
+
+        /// <summary>
+        /// Executes a compute macro.
+        /// </summary>
+        public void ComputeCallMme(int index, IDeviceState state)
+        {
+            _computeMacros[index].Execute(_computeMacroCode, state);
         }
     }
 }
