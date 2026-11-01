@@ -477,17 +477,66 @@ namespace Ryujinx.HLE.HOS.Services.Nv.NvDrvServices.NvHostChannel
             Logger.Warning?.Print(LogClass.ServiceNv, $"NX2 submit from thread {caller?.ThreadUid} pc=0x{callerPc:X}:\n{callerTrace}");
 
             // The sender thread is blocked in SendSyncRequest right now; find it by its stack.
+            // Server-loop threads have no guest stack. Senders park with PC at the send
+            // SVC site (observed as 0xC38408C); match that first, then any parked thread
+            // whose stack passes through the IPC send wrapper region.
+            // NOTE: stack walking can fail (PAC-signed returns), so also log every thread
+            // PC of the game process with no unwinding; an empty result here is a tool
+            // failure, not proof of absence.
+            int senderLogs = 0;
+            int emptyStacks = 0;
+            System.Text.StringBuilder pcLine = new("NX2 pcs pid=109:");
+
             foreach (System.Collections.Generic.KeyValuePair<ulong, Ryujinx.HLE.HOS.Kernel.Process.KProcess> procEntry in _device.System.KernelContext.Processes)
             {
+                if (procEntry.Key != 109)
+                {
+                    continue;
+                }
+
                 foreach (Ryujinx.HLE.HOS.Kernel.Threading.KThread thread in procEntry.Value.DebugThreads)
                 {
+                    pcLine.Append($" {thread.ThreadUid}=0x{thread.Context.Pc:X}");
+
                     string trace = thread.GetGuestStackTrace();
 
-                    if (!string.IsNullOrWhiteSpace(trace) && trace.Contains("5C") && trace.Length < 4000)
+                    if (string.IsNullOrWhiteSpace(trace))
                     {
-                        Logger.Warning?.Print(LogClass.ServiceNv, $"NX2 submitter pid={procEntry.Key} tid={thread.ThreadUid} pc=0x{thread.Context.Pc:X}:\n{trace}");
+                        emptyStacks++;
+
+                        continue;
+                    }
+
+                    if (trace.Length >= 4000)
+                    {
+                        continue;
+                    }
+
+                    bool parkedAtSend = thread.Context.Pc == 0xC38408C;
+                    bool viaWrapper = trace.Contains("c3840", System.StringComparison.OrdinalIgnoreCase);
+
+                    if (!parkedAtSend && !viaWrapper)
+                    {
+                        continue;
+                    }
+
+                    Logger.Warning?.Print(LogClass.ServiceNv, $"NX2 submitter pid={procEntry.Key} tid={thread.ThreadUid} pc=0x{thread.Context.Pc:X}:\n{trace}");
+
+                    if (++senderLogs >= 4)
+                    {
+                        break;
                     }
                 }
+
+                if (senderLogs >= 4)
+                {
+                    break;
+                }
+            }
+
+            if (senderLogs == 0)
+            {
+                Logger.Warning?.Print(LogClass.ServiceNv, $"NX2 submitter: no parked sender thread found ({emptyStacks} empty stacks). {pcLine}");
             }
 
             if (System.Threading.Interlocked.Increment(ref ProcLogCount) == 1)
