@@ -116,7 +116,17 @@ namespace Ryujinx.HLE.HOS.Kernel.Threading
         {
             _context.CriticalSection.Enter();
 
-            if (syncObj.IsSignaled())
+            int hash = System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(syncObj);
+            bool signaled = syncObj.IsSignaled();
+            int waiting = syncObj.WaitingThreads.Count;
+
+            if (hash == 3030563)
+            {
+                Ryujinx.Common.Logging.Logger.Warning?.Print(Ryujinx.Common.Logging.LogClass.KernelSvc,
+                    $"NX2 SignalObject hash={hash} signaled={signaled} waiting={waiting}");
+            }
+
+            if (signaled)
             {
                 LinkedListNode<KThread> node = syncObj.WaitingThreads.First;
 
