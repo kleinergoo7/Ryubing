@@ -157,7 +157,22 @@ namespace ARMeilleure.Decoders
             SetA64("11011000xxxxxxxxxxxxxxxxxxxxxxxx", InstName.Prfm,            InstEmit.Prfm,            OpCodeMemLit.Create); // literal
             SetA64("11111000101xxxxxxxxx10xxxxxxxxxx", InstName.Prfm,            InstEmit.Prfm,            OpCodeMemReg.Create); // register
             SetA64("x101101011000000000000xxxxxxxxxx", InstName.Rbit,            InstEmit.Rbit,            OpCodeAlu.Create);
+            SetA64("11010110010111110000101111111111", InstName.Ret,             InstEmit.Ret,             OpCodeBReg.CreateRetAuth); // retaa (pointer auth ignored)
+            SetA64("11010110010111110000111111111111", InstName.Ret,             InstEmit.Ret,             OpCodeBReg.CreateRetAuth); // retab
             SetA64("1101011001011111000000xxxxx00000", InstName.Ret,             InstEmit.Ret,             OpCodeBReg.Create);
+            SetA64("110110101100000101000011111xxxxx", InstName.Nop,             InstEmit.Nop,             OpCodeSystem.Create); // xpaci (pointer auth is identity)
+
+            for (int size = 0; size < 4; size++)
+            {
+                for (int op = 0; op < 9; op++)
+                {
+                    SetA64(GetAtomicEncoding(size, op), InstName.Atomic, InstEmit.Atomic, OpCodeAtomic.Create);
+                }
+
+                SetA64(GetCasEncoding(size), InstName.Cas, InstEmit.Cas, OpCodeCas.Create);
+                SetA64(GetLdaprEncoding(size), InstName.Ldapr, InstEmit.Ldapr, OpCodeMem.Create);
+            }
+
             SetA64("x101101011000000000001xxxxxxxxxx", InstName.Rev16,           InstEmit.Rev16,           OpCodeAlu.Create);
             SetA64("x101101011000000000010xxxxxxxxxx", InstName.Rev32,           InstEmit.Rev32,           OpCodeAlu.Create);
             SetA64("1101101011000000000011xxxxxxxxxx", InstName.Rev64,           InstEmit.Rev64,           OpCodeAlu.Create);
@@ -1412,6 +1427,47 @@ namespace ARMeilleure.Decoders
             }
 
             SetT32(thumbEncoding, name, emitter, makeOpT32);
+        }
+
+        private static string GetAtomicEncoding(int size, int op)
+        {
+            string sizeBits = size switch
+            {
+                0 => "00",
+                1 => "01",
+                2 => "10",
+                _ => "11",
+            };
+
+            string opBits = System.Convert.ToString(op, 2).PadLeft(4, '0');
+
+            return $"{sizeBits}111000xx1xxxxx{opBits}00xxxxxxxxxx";
+        }
+
+        private static string GetLdaprEncoding(int size)
+        {
+            string sizeBits = size switch
+            {
+                0 => "00",
+                1 => "01",
+                2 => "10",
+                _ => "11",
+            };
+
+            return $"{sizeBits}11100010111111110000xxxxxxxxxx";
+        }
+
+        private static string GetCasEncoding(int size)
+        {
+            string sizeBits = size switch
+            {
+                0 => "00",
+                1 => "01",
+                2 => "10",
+                _ => "11",
+            };
+
+            return $"{sizeBits}0010001x1xxxxxx11111xxxxxxxxxx";
         }
 
         private static void SetA64(string encoding, InstName name, InstEmitter emitter, MakeOp makeOp)
