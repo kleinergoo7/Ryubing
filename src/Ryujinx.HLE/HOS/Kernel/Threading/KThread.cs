@@ -76,6 +76,32 @@ namespace Ryujinx.HLE.HOS.Kernel.Threading
 
         public ulong TlsAddress => _tlsAddress;
 
+        private ulong _ipcRecvTemplateLo;
+        private ulong _ipcRecvTemplateHi;
+        private bool _hasIpcRecvTemplate;
+
+        /// <summary>
+        /// Saves the server-side receive-list template (header words and heap entry)
+        /// so it can be restored after a reply consumed the TLS message buffer.
+        /// </summary>
+        public void SaveIpcReceiveTemplate(ulong lo, ulong hi)
+        {
+            _ipcRecvTemplateLo = lo;
+            _ipcRecvTemplateHi = hi;
+            _hasIpcRecvTemplate = true;
+        }
+
+        public void RestoreIpcReceiveTemplate()
+        {
+            if (!_hasIpcRecvTemplate)
+            {
+                return;
+            }
+
+            Owner.CpuMemory.Write(TlsAddress + 0, _ipcRecvTemplateLo);
+            Owner.CpuMemory.Write(TlsAddress + 8, _ipcRecvTemplateHi);
+        }
+
         public KSynchronizationObject[] WaitSyncObjects { get; }
         public int[] WaitSyncHandles { get; }
 

@@ -20,6 +20,11 @@ namespace Ryujinx.HLE.HOS.Kernel.SupervisorCall
     {
         private readonly KernelContext _context;
 
+        private static readonly bool _waitLog = System.Environment.GetEnvironmentVariable("NX2_WAIT_LOG") == "1";
+        private static readonly bool WaitLogEnabled = System.Environment.GetEnvironmentVariable("NX2_WAIT_LOG") == "1";
+        private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, byte> WaitSiteLogged = [];
+        private static readonly long[] _waitLogLast = new long[256];
+
         public Syscall(KernelContext context)
         {
             _context = context;
@@ -248,6 +253,9 @@ namespace Ryujinx.HLE.HOS.Kernel.SupervisorCall
             return result;
         }
 
+        // Diagnostic: guest call-site histogram for SendSyncRequest (pid 109 only).
+        public static readonly System.Collections.Concurrent.ConcurrentDictionary<(ulong Pid, ulong Pc), int> GuestCallSites = [];
+
         [Svc(0x21)]
         public Result SendSyncRequest(int handle)
         {
@@ -258,6 +266,17 @@ namespace Ryujinx.HLE.HOS.Kernel.SupervisorCall
             if (session == null)
             {
                 return KernelResult.InvalidHandle;
+            }
+
+            KThread caller = KernelStatic.GetCurrentThread();
+
+            if (caller != null)
+            {
+                GuestCallSites.AddOrUpdate((caller.Owner.Pid, caller.Context.Pc), 1, (_, v) => v + 1);
+            }
+            else
+            {
+                Logger.Warning?.Print(LogClass.KernelSvc, "NX2 send-sync with no current thread; caller untracked");
             }
 
             return session.SendSyncRequest();
@@ -596,6 +615,11 @@ namespace Ryujinx.HLE.HOS.Kernel.SupervisorCall
                 else
                 {
                     result = replyTarget.Reply();
+
+                    if (result == Result.Success)
+                    {
+                        KernelStatic.GetCurrentThread()?.RestoreIpcReceiveTemplate();
+                    }
                 }
             }
 
@@ -1946,6 +1970,11 @@ namespace Ryujinx.HLE.HOS.Kernel.SupervisorCall
                 case InfoType.IsApplication:
                 case InfoType.FreeThreadCount:
                 case InfoType.AliasRegionExtraSize:
+                case InfoType.Nx2RegionAddress:
+                case InfoType.Nx2RegionSize:
+                case InfoType.Nx2RemoteMemorySize:
+                case InfoType.Nx2RemoteMemoryUsed:
+                case InfoType.Nx2VammSize:
                     {
                         if (subId != 0)
                         {
@@ -2050,6 +2079,29 @@ namespace Ryujinx.HLE.HOS.Kernel.SupervisorCall
 
                             case InfoType.AliasRegionExtraSize:
                                 value = process.MemoryManager.AliasRegionExtraSize;
+                                break;
+
+                            case InfoType.Nx2RegionAddress:
+                            case InfoType.Nx2RegionSize:
+                                {
+                                    ulong aliasStart = process.MemoryManager.AliasRegionStart;
+                                    ulong aliasSize = process.MemoryManager.AliasRegionEnd - aliasStart;
+                                    ulong half = aliasSize / 2;
+
+                                    value = id == InfoType.Nx2RegionAddress ? aliasStart + half : half;
+                                    Logger.Warning?.Print(LogClass.KernelSvc, $"(STUBBED) Switch 2 InfoType {(int)id} = 0x{value:X}");
+                                }
+                                break;
+
+                            case InfoType.Nx2RemoteMemorySize:
+                            case InfoType.Nx2RemoteMemoryUsed:
+                                value = 0;
+                                Logger.Warning?.Print(LogClass.KernelSvc, $"(STUBBED) Switch 2 InfoType {(int)id} = 0");
+                                break;
+
+                            case InfoType.Nx2VammSize:
+                                value = KPageTableBase.PageSize;
+                                Logger.Warning?.Print(LogClass.KernelSvc, $"(STUBBED) Switch 2 InfoType 33 = 0x{value:X}");
                                 break;
                         }
 
@@ -2229,6 +2281,7 @@ namespace Ryujinx.HLE.HOS.Kernel.SupervisorCall
                     }
 
                 default:
+                    Logger.Warning?.Print(LogClass.KernelSvc, $"GetInfo: unsupported id={id} handle={handle} subId={subId}");
                     return KernelResult.InvalidEnumValue;
             }
 
@@ -2437,6 +2490,12 @@ namespace Ryujinx.HLE.HOS.Kernel.SupervisorCall
 
             peak = resourceLimit.GetPeakValue(resource);
 
+            return Result.Success;
+        }
+
+        [Svc(0x80)]
+        public Result SetGpuMemoryAttribute(ulong address, ulong size, ulong mask, ulong attribute)
+        {
             return Result.Success;
         }
 
@@ -2862,6 +2921,34 @@ namespace Ryujinx.HLE.HOS.Kernel.SupervisorCall
             }
 
             KThread currentThread = KernelStatic.GetCurrentThread();
+
+            if (WaitLogEnabled && handles.Length != 0)
+            {
+                KSynchronizationObject obj = KernelStatic.GetCurrentProcess().HandleTable.GetObject<KSynchronizationObject>(handles[0]);
+                int hash = obj != null ? System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(obj) : 0;
+                string key = $"{currentThread.ThreadUid}:{hash}:0x{currentThread.Context.Pc:X}:{obj?.GetType().Name}";
+
+                if (WaitSiteLogged.TryAdd(key, 0))
+                {
+                    Logger.Warning?.Print(LogClass.KernelSvc,
+                        $"NX2 wait-site thread={currentThread.ThreadUid} obj={obj?.GetType().Name} hash={hash} pc=0x{currentThread.Context.Pc:X} timeout={timeout}");
+                }
+            }
+
+            if (_waitLog && handles.Length != 0)
+            {
+                long now = System.Environment.TickCount64;
+                int slot = (int)(handles[0] & 0xFF);
+
+                if (now - _waitLogLast[slot] >= 1000)
+                {
+                    _waitLogLast[slot] = now;
+
+                    KSynchronizationObject logObj = KernelStatic.GetCurrentProcess().HandleTable.GetObject<KSynchronizationObject>(handles[0]);
+
+                    Logger.Info?.Print(LogClass.KernelSvc, $"NX2 wait handle=0x{handles[0]:X8} obj={logObj?.GetType().Name} hash={(logObj != null ? System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(logObj) : 0)} timeout={timeout}");
+                }
+            }
 
             Span<KSynchronizationObject> syncObjs = new Span<KSynchronizationObject>(currentThread.WaitSyncObjects)[..handles.Length];
 

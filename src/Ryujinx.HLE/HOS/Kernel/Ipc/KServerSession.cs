@@ -252,6 +252,13 @@ namespace Ryujinx.HLE.HOS.Kernel.Ipc
             MessageHeader clientHeader = GetClientMessageHeader(clientProcess, clientMsg);
             MessageHeader serverHeader = GetServerMessageHeader(serverMsg);
 
+            if (!serverMsg.IsCustom && serverHeader.ReceiveListType == 2)
+            {
+                serverThread.SaveIpcReceiveTemplate(
+                    serverProcess.CpuMemory.Read<ulong>(serverMsg.Address + 0),
+                    serverProcess.CpuMemory.Read<ulong>(serverMsg.Address + 8));
+            }
+
             Result serverResult = KernelResult.NotFound;
             Result clientResult = Result.Success;
 
@@ -280,29 +287,32 @@ namespace Ryujinx.HLE.HOS.Kernel.Ipc
                 RequestPool.Release(request);
             }
 
-            if (clientHeader.ReceiveListType < 2 &&
-                clientHeader.ReceiveListOffset > clientMsg.Size)
+            // The destination of a request is the server, so its receive list (the
+            // pointer buffer the server prepared before svcReplyAndReceive) is the
+            // one that client pointer buffers are copied into.
+            if (serverHeader.ReceiveListType < 2 &&
+                serverHeader.ReceiveListOffset > serverMsg.Size)
             {
                 CleanUpForError();
 
                 return KernelResult.InvalidCombination;
             }
-            else if (clientHeader.ReceiveListType == 2 &&
-                     clientHeader.ReceiveListOffset + 8 > clientMsg.Size)
+            else if (serverHeader.ReceiveListType == 2 &&
+                     serverHeader.ReceiveListOffset + 8 > serverMsg.Size)
             {
                 CleanUpForError();
 
                 return KernelResult.InvalidCombination;
             }
-            else if (clientHeader.ReceiveListType > 2 &&
-                     clientHeader.ReceiveListType * 8 - 0x10 + clientHeader.ReceiveListOffset > clientMsg.Size)
+            else if (serverHeader.ReceiveListType > 2 &&
+                     serverHeader.ReceiveListType * 8 - 0x10 + serverHeader.ReceiveListOffset > serverMsg.Size)
             {
                 CleanUpForError();
 
                 return KernelResult.InvalidCombination;
             }
 
-            if (clientHeader.ReceiveListOffsetInWords < clientHeader.MessageSizeInWords)
+            if (serverHeader.ReceiveListOffsetInWords < serverHeader.MessageSizeInWords)
             {
                 CleanUpForError();
 
@@ -412,7 +422,7 @@ namespace Ryujinx.HLE.HOS.Kernel.Ipc
                         descriptor,
                         serverMsg,
                         serverHeader.ReceiveListType,
-                        clientHeader.MessageSizeInWords,
+                        serverHeader.MessageSizeInWords,
                         receiveList,
                         ref recvListDstOffset,
                         out ulong recvListBufferAddress);
@@ -778,7 +788,7 @@ namespace Ryujinx.HLE.HOS.Kernel.Ipc
                         descriptor,
                         clientMsg,
                         clientHeader.ReceiveListType,
-                        serverHeader.MessageSizeInWords,
+                        clientHeader.MessageSizeInWords,
                         receiveList,
                         ref recvListDstOffset,
                         out recvListBufferAddress);

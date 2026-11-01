@@ -9,6 +9,8 @@ namespace Ryujinx.HLE.HOS.Kernel.Threading
         {
             ReadableEvent = new KReadableEvent(context);
             WritableEvent = new KWritableEvent(context, this);
+
+            Ryujinx.Common.Logging.Logger.Info?.Print(Ryujinx.Common.Logging.LogClass.KernelSvc, $"KEvent create hash={System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(ReadableEvent)}");
         }
     }
 }

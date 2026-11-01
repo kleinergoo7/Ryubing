@@ -32,6 +32,13 @@ namespace Ryujinx.HLE.HOS.Kernel.SupervisorCall
         IoRegionHint,
         AliasRegionExtraSize,
 
+        // Switch 2 kernels.
+        Nx2RegionAddress = 29,
+        Nx2RegionSize = 30,
+        Nx2RemoteMemorySize = 31,
+        Nx2RemoteMemoryUsed = 32,
+        Nx2VammSize = 33,
+
         MesosphereCurrentProcess = 65001,
     }
 }

@@ -81,6 +81,8 @@ namespace Ryujinx.HLE.HOS.Kernel.Process
 
         private readonly LinkedList<KThread> _threads;
 
+        public System.Collections.Generic.IEnumerable<KThread> DebugThreads => _threads;
+
         public bool IsPaused { get; private set; }
 
         private long _totalTimeRunning;
