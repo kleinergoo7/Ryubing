@@ -101,6 +101,30 @@ namespace Ryujinx.HLE.HOS.Services.Am.AppletAE.AllSystemAppletProxiesService.Sys
                 cpu = $"unavailable: {ex.GetType().Name}";
             }
 
+            if (_progressTicks == 3600 && _dumpKernel != null)
+            {
+                foreach (Ryujinx.HLE.HOS.Kernel.Process.KProcess procEntry in _dumpKernel.Processes.Values)
+                {
+                    if (procEntry.Pid != 109)
+                    {
+                        continue;
+                    }
+
+                    foreach (Ryujinx.HLE.HOS.Kernel.Threading.KThread thread in procEntry.DebugThreads)
+                    {
+                        if (thread.ThreadUid != 28)
+                        {
+                            continue;
+                        }
+
+                        string trace = thread.GetGuestStackTrace();
+
+                        Ryujinx.Common.Logging.Logger.Warning?.Print(Ryujinx.Common.Logging.LogClass.ServiceVi,
+                            $"NX2 MainThread@60s pc=0x{thread.Context.Pc:X} stack:\n{trace}");
+                    }
+                }
+            }
+
             Ryujinx.Common.Logging.Logger.Warning?.Print(Ryujinx.Common.Logging.LogClass.ServiceVi,
                 $"NX2 progress t={_progressTicks / 60}s submits={Nx2Counters.Submits} presents={Nx2Counters.Presents} sparseCommit={Ryujinx.Graphics.Gpu.Memory.Nx2GpuMemory.SparseCommitted >> 20}MiB dropped={Ryujinx.Graphics.Gpu.Memory.Nx2GpuMemory.SparseDropped >> 20}MiB cpu=[{cpu}] sites=[{sites}] gpu=[{gpu}]");
         }
