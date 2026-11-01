@@ -2607,12 +2607,12 @@ namespace Ryujinx.HLE.HOS.Kernel.SupervisorCall
 
                 // Diagnostic: who creates guest threads, bounded. The render/submit thread
                 // must appear here; if it never does, game init stalled before creating it.
-                if (System.Threading.Interlocked.Increment(ref _threadCreateLogs) <= 60)
+                if (System.Threading.Interlocked.Increment(ref _threadCreateLogs) <= 400)
                 {
                     KThread creator = KernelStatic.GetCurrentThread();
 
                     Logger.Warning?.Print(LogClass.KernelSvc,
-                        $"NX2 thread created pid={process.Pid} tid={thread.ThreadUid} entry=0x{entrypoint:X} prio={priority} core={cpuCore} by tid={creator?.ThreadUid} pc=0x{creator?.Context.Pc:X}");
+                        $"NX2 thread created pid={process.Pid} tid={thread.ThreadUid} entry=0x{entrypoint:X} args=0x{argsPtr:X} stack=0x{stackTop:X} prio={priority} core={cpuCore} by tid={creator?.ThreadUid} pc=0x{creator?.Context.Pc:X}");
                 }
             }
             else
