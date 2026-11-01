@@ -1,5 +1,6 @@
 using CommandLine;
 using Ryujinx.Graphics.Shader;
+using Ryujinx.Graphics.Shader.Decoders.Ampere;
 using Ryujinx.Graphics.Shader.Translation;
 using System;
 using System.IO;
@@ -85,13 +86,25 @@ namespace Ryujinx.ShaderTools
             [Option("vertex-passthrough", Required = false, Default = false, HelpText = "Indicate that the shader is a vertex passthrough shader for compute output.")]
             public bool VertexPassthrough { get; set; }
 
+            [Option("ampere", Required = false, Default = false, HelpText = "Lower a native Ampere (SM86) instruction stream with the offline lowering core.")]
+            public bool Ampere { get; set; }
+
+            [Option("ampere-self-test", Required = false, Default = false, HelpText = "Run the offline Ampere lowering self-test.")]
+            public bool AmpereSelfTest { get; set; }
+
+            [Option("ampere-header", Required = false, Default = false, HelpText = "The Ampere input includes the 0x50-byte graphics shader header.")]
+            public bool AmpereHeader { get; set; }
+
+            [Option("ampere-image", Required = false, Default = false, HelpText = "Write the lowered Maxwell shader image instead of translating it.")]
+            public bool AmpereImage { get; set; }
+
             [Option("target-language", Required = false, Default = TargetLanguage.Glsl, HelpText = "Indicate the target shader language to use.")]
             public TargetLanguage TargetLanguage { get; set; }
 
             [Option("target-api", Required = false, Default = TargetApi.OpenGL, HelpText = "Indicate the target graphics api to use.")]
             public TargetApi TargetApi { get; set; }
 
-            [Value(0, MetaName = "input", HelpText = "Binary Maxwell shader input path.", Required = true)]
+            [Value(0, MetaName = "input", HelpText = "Binary Maxwell shader input path.", Required = false)]
             public string InputPath { get; set; }
 
             [Value(1, MetaName = "output", HelpText = "Decompiled shader output path.", Required = false)]
@@ -100,14 +113,101 @@ namespace Ryujinx.ShaderTools
 
         static void HandleArguments(Options options)
         {
+            if (options.AmpereSelfTest)
+            {
+                AmpereLoweringSelfTest.Run();
+
+                Console.Error.WriteLine("Ampere lowering self-test passed.");
+
+                return;
+            }
+
+            if (options.InputPath == null)
+            {
+                Console.Error.WriteLine("Missing input path.");
+
+                return;
+            }
+
+            if (options.Ampere)
+            {
+                HandleAmpere(options);
+                return;
+            }
+
+            byte[] data = File.ReadAllBytes(options.InputPath);
+
+            Translate(data, options);
+        }
+
+        private static void HandleAmpere(Options options)
+        {
+            byte[] data = File.ReadAllBytes(options.InputPath);
+
+            int inputHeaderSize = options.AmpereHeader ? AmpereLayout.HeaderSize : 0;
+            ReadOnlySpan<byte> code = data.AsSpan(inputHeaderSize);
+
+            if (code.Length == 0 || code.Length % AmpereInstruction.Size != 0)
+            {
+                Console.Error.WriteLine($"Ampere input is {code.Length} bytes, not a non-empty multiple of {AmpereInstruction.Size}.");
+
+                return;
+            }
+
+            AmpereInstruction[] instructions = NativeShaderImage.ReadInstructions(code);
+            AmpereLoweredProgram lowered = AmpereLowering.LowerToMaxwell(instructions);
+
+            if (!lowered.Success)
+            {
+                Console.Error.WriteLine($"Lowering failed at 0x{lowered.ErrorOffset:X}: {lowered.Error}");
+
+                return;
+            }
+
+            Console.Error.WriteLine(
+                $"Lowered {instructions.Length} native instructions to {lowered.Instructions.Count} Maxwell instructions.");
+
+            for (int index = 0; index < lowered.Instructions.Count; index++)
+            {
+                uint address = AmpereLayout.AddressOf((uint)index);
+
+                Console.Error.WriteLine($"{inputHeaderSize + address,8:X8}: {lowered.Instructions[index]:X16}");
+            }
+
+            byte[] image = NativeShaderImage.Build(data, lowered, options.AmpereHeader);
+
+            if (options.AmpereImage)
+            {
+                if (options.OutputPath == null)
+                {
+                    Console.Error.WriteLine("--ampere-image needs an output path.");
+                }
+                else
+                {
+                    File.WriteAllBytes(options.OutputPath, image);
+                }
+
+                return;
+            }
+
+            try
+            {
+                Translate(image, options);
+            }
+            catch (Exception exception)
+            {
+                Console.Error.WriteLine($"Translation of the lowered image failed: {exception.Message}");
+            }
+        }
+
+        private static void Translate(byte[] data, Options options)
+        {
             TranslationFlags flags = TranslationFlags.DebugMode;
 
             if (options.Compute)
             {
                 flags |= TranslationFlags.Compute;
             }
-
-            byte[] data = File.ReadAllBytes(options.InputPath);
 
             TranslationOptions translationOptions = new(options.TargetLanguage, options.TargetApi, flags);
             TranslatorContext translatorContext = Translator.CreateContext(0, new GpuAccessor(data), translationOptions);

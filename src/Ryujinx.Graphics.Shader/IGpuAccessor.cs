@@ -27,6 +27,12 @@ namespace Ryujinx.Graphics.Shader
         ReadOnlySpan<ulong> GetCode(ulong address, int minimumSize);
 
         /// <summary>
+        /// Indicates that the shader code is a native Ampere (SM86) program that must be
+        /// lowered before decoding. Maxwell programs leave this false.
+        /// </summary>
+        bool IsNx2Ampere => false;
+
+        /// <summary>
         /// Gets the binding number of a constant buffer.
         /// </summary>
         /// <param name="index">Constant buffer index</param>

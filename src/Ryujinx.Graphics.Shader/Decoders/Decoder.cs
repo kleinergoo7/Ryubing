@@ -45,7 +45,11 @@ namespace Ryujinx.Graphics.Shader.Decoders
             }
         }
 
-        public static DecodedProgram Decode(ShaderDefinitions definitions, IGpuAccessor gpuAccessor, ulong startAddress)
+        public static DecodedProgram Decode(
+            ShaderDefinitions definitions,
+            IGpuAccessor gpuAccessor,
+            ulong startAddress,
+            Func<uint, uint?> nativeAddressMap = null)
         {
             Context context = new(gpuAccessor);
             Queue<DecodedFunction> functionsQueue = new();
@@ -185,7 +189,7 @@ namespace Ryujinx.Graphics.Shader.Decoders
                     }
 
                     // Try to find targets for BRX (indirect branch) instructions.
-                    hasNewTarget = FindBrxTargets(context, blocks, GetBlock);
+                    hasNewTarget = FindBrxTargets(context, blocks, GetBlock, nativeAddressMap);
 
                     // If we discovered new branch targets from the BRX instruction,
                     // we need another round of decoding to decode the new blocks.
@@ -515,7 +519,11 @@ namespace Ryujinx.Graphics.Shader.Decoders
             return condOp.Pred == RegisterConsts.PredicateTrueIndex && !condOp.PredInv;
         }
 
-        private static bool FindBrxTargets(Context context, IEnumerable<Block> blocks, Func<ulong, Block> getBlock)
+        private static bool FindBrxTargets(
+            Context context,
+            IEnumerable<Block> blocks,
+            Func<ulong, Block> getBlock,
+            Func<uint, uint?> nativeAddressMap)
         {
             bool hasNewTarget = false;
 
@@ -544,6 +552,18 @@ namespace Ryujinx.Graphics.Shader.Decoders
                     {
                         uint targetOffset = context.ConstantBuffer1Read(cbBaseOffset + i * 4);
                         ulong targetAddress = baseOffset + targetOffset;
+
+                        // Native Ampere jump tables hold native program counters. The lowered
+                        // BRX keeps base offset zero, so map the entry into the code layout.
+                        if (nativeAddressMap != null && targetAddress <= uint.MaxValue)
+                        {
+                            uint? mappedAddress = nativeAddressMap((uint)targetAddress);
+
+                            if (mappedAddress.HasValue)
+                            {
+                                targetAddress = mappedAddress.Value;
+                            }
+                        }
 
                         if (visited.Add(targetAddress))
                         {
