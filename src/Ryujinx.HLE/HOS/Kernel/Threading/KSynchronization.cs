@@ -120,10 +120,20 @@ namespace Ryujinx.HLE.HOS.Kernel.Threading
             bool signaled = syncObj.IsSignaled();
             int waiting = syncObj.WaitingThreads.Count;
 
-            if (hash == 3030563)
+            bool mainThreadWaiting = false;
+
+            foreach (LinkedListNode<KThread> n in syncObj.WaitingThreads)
+            {
+                if (n.Value.ThreadUid == 28)
+                {
+                    mainThreadWaiting = true;
+                }
+            }
+
+            if (mainThreadWaiting)
             {
                 Ryujinx.Common.Logging.Logger.Warning?.Print(Ryujinx.Common.Logging.LogClass.KernelSvc,
-                    $"NX2 SignalObject hash={hash} signaled={signaled} waiting={waiting}");
+                    $"NX2 SignalObject hash={hash} signaled={signaled} waiting={waiting} mainThreadWaiting=True");
             }
 
             if (signaled)
@@ -134,7 +144,7 @@ namespace Ryujinx.HLE.HOS.Kernel.Threading
                 {
                     KThread thread = node.Value;
 
-                    if (hash == 3030563)
+                    if (mainThreadWaiting)
                     {
                         Ryujinx.Common.Logging.Logger.Warning?.Print(Ryujinx.Common.Logging.LogClass.KernelSvc,
                             $"NX2 SignalObject hash={hash} thread={thread.ThreadUid} schedFlags=0x{thread.SchedFlags:X} signaledObj={thread.SignaledObj != null}");
