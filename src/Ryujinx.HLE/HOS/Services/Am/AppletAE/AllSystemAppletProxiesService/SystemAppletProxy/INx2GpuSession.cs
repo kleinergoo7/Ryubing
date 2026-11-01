@@ -1,3 +1,4 @@
+// Behavior ported from Eglantine (Eden fork) Switch 2 support; see NX2_NOTES.md there.
 using Ryujinx.Common.Logging;
 using Ryujinx.Graphics.Gpu.Memory;
 using Ryujinx.HLE.HOS.Ipc;
@@ -219,8 +220,10 @@ namespace Ryujinx.HLE.HOS.Services.Am.AppletAE.AllSystemAppletProxiesService.Sys
             return ResultCode.Success;
         }
 
-        // Sub 212 (NormalModifyMemoryKind4K): word 7 the wanted kind, word 10 the job slot. Kinds
-        // do not matter to the emulated GPU, so keep the mapping and report the wanted kind.
+        // Sub 212 (NormalModifyMemoryKind4K): word 7 the wanted kind, word 10 the job slot.
+        // WORKAROUND: kinds do not matter to the emulated GPU, so the mapping is kept and the
+        // wanted kind is echoed back. Logged per call at Debug; revisit if a title checks the
+        // applied kind against hardware capabilities.
         [CommandTipc(212)]
         public ResultCode ModifyMemoryKind(ServiceCtx context)
         {
@@ -288,7 +291,10 @@ namespace Ryujinx.HLE.HOS.Services.Am.AppletAE.AllSystemAppletProxiesService.Sys
             }
             else
             {
-                Logger.Warning?.Print(LogClass.KernelIpc, $"nx2:gpu 214 unexpected region [0x{start:X}, 0x{last:X}]");
+                Logger.Warning?.Print(LogClass.KernelIpc,
+                    $"nx2:gpu 214 rejected region [0x{start:X}, 0x{last:X}]; reporting failure instead of a fake success");
+
+                return ResultCode.MemoryAllocationFailed;
             }
 
             CompleteJobs(context, slot);

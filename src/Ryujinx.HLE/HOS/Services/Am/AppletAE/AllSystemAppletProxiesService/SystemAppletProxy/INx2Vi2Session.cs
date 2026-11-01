@@ -1,3 +1,4 @@
+// Behavior ported from Eglantine (Eden fork) Switch 2 support; see NX2_NOTES.md there.
 using Ryujinx.Common.Memory;
 using Ryujinx.Graphics.GAL;
 using Ryujinx.HLE.HOS.Ipc;
@@ -213,29 +214,31 @@ namespace Ryujinx.HLE.HOS.Services.Am.AppletAE.AllSystemAppletProxiesService.Sys
 
                     if (System.Threading.Interlocked.Increment(ref _fenceLogs) <= 12)
                     {
-                        uint now = waitId < 192 ? context.Device.Gpu.Synchronization.GetSyncpointValue(waitId) : 0;
+                        uint now = waitId < MaxSyncpoints ? context.Device.Gpu.Synchronization.GetSyncpointValue(waitId) : 0;
 
                         Ryujinx.Common.Logging.Logger.Warning?.Print(Ryujinx.Common.Logging.LogClass.ServiceVi,
                             $"NX2 present fence id={fenceId} value={fenceValue} (previous {waitId},{waitValue}) now={now}");
                     }
 
-                    if (waitId < 192 && waitValue != 0)
+                    if (waitId < MaxSyncpoints && waitValue != 0)
                     {
                         context.Device.Gpu.Synchronization.WaitOnSyncpoint(waitId, waitValue, TimeSpan.FromSeconds(1));
                     }
                 }
             }
-            catch
+            catch (Exception ex)
             {
-                // A short request just skips the pacing.
+                // A short request just skips the pacing; anything else is a real bug.
+                Ryujinx.Common.Logging.Logger.Warning?.Print(Ryujinx.Common.Logging.LogClass.ServiceVi,
+                    $"NX2 present fence parse failed: {ex.GetType().Name}: {ex.Message}");
             }
 
             Composite(context, imageId);
 
             // Oracle: reply is a u64 mask of buffer slots the client may acquire next
-            // (all free = 0x7fff) plus four zero words. A zero mask stalls the producer.
+            // (all free = AllSlotsFreeMask) plus four zero words. A zero mask stalls the producer.
             context.ResponseData.BaseStream.Seek(4, System.IO.SeekOrigin.Begin);
-            context.ResponseData.Write(0x7fffu);
+            context.ResponseData.Write(AllSlotsFreeMask);
             context.ResponseData.Write(0u);
             context.ResponseData.Write(0u);
             context.ResponseData.Write(0u);
@@ -255,7 +258,9 @@ namespace Ryujinx.HLE.HOS.Services.Am.AppletAE.AllSystemAppletProxiesService.Sys
         }
 
         // The CPU present runs on the guest's own present thread; it must stay cheap.
-        private const bool CompositeEnabled = false;
+        // Disabled until the renderer submits real frames; static (not const) so the
+        // disabled path does not trip unreachable-code warnings.
+        private static readonly bool CompositeEnabled = false;
 
         private static void Composite(ServiceCtx context, uint imageId)
         {
@@ -292,10 +297,37 @@ namespace Ryujinx.HLE.HOS.Services.Am.AppletAE.AllSystemAppletProxiesService.Sys
 
             (uint width, uint height, ulong pitch, uint blockHeightLog2, ulong size) = Nx2NativeObjects.Layout(image.Preference);
 
+            // Guest-controlled dimensions: validate before any narrowing cast or allocation.
+            // RGBA8 needs width * 4 * height bytes; reject anything that overflows an int.
+            long pixelBytes;
+
+            try
+            {
+                pixelBytes = checked((long)width * 4 * height);
+            }
+            catch (OverflowException)
+            {
+                Ryujinx.Common.Logging.Logger.Warning?.Print(Ryujinx.Common.Logging.LogClass.ServiceVi,
+                    $"NX2 composite image={imageId} dimensions overflow: {width}x{height}");
+
+                return;
+            }
+
+            if (size > int.MaxValue || pixelBytes > int.MaxValue || width == 0 || height == 0)
+            {
+                Ryujinx.Common.Logging.Logger.Warning?.Print(Ryujinx.Common.Logging.LogClass.ServiceVi,
+                    $"NX2 composite image={imageId} size out of range: {width}x{height} size=0x{size:X}");
+
+                return;
+            }
+
             ulong pid = context.Device.Processes.ActiveApplication?.ProcessId ?? 0;
 
             if (pid == 0 || !context.Device.System.KernelContext.Processes.TryGetValue(pid, out Ryujinx.HLE.HOS.Kernel.Process.KProcess process))
             {
+                Ryujinx.Common.Logging.Logger.Warning?.Print(Ryujinx.Common.Logging.LogClass.ServiceVi,
+                    $"NX2 composite image={imageId}: no active application process");
+
                 return;
             }
 
@@ -306,25 +338,26 @@ namespace Ryujinx.HLE.HOS.Services.Am.AppletAE.AllSystemAppletProxiesService.Sys
             }
 
             byte[] source = RentBuffer(ref _sourceBuffer, (int)size);
-            byte[] linear = RentBuffer(ref _linearBuffer, (int)(width * 4 * height));
+            byte[] linear = RentBuffer(ref _linearBuffer, (int)pixelBytes);
 
             try
             {
                 process.CpuMemory.Read(address, source.AsSpan(0, (int)size));
             }
-            catch
+            catch (Exception ex)
             {
+                Ryujinx.Common.Logging.Logger.Warning?.Print(Ryujinx.Common.Logging.LogClass.ServiceVi,
+                    $"NX2 composite image={imageId} read of 0x{size:X} bytes at 0x{address:X} failed: {ex.GetType().Name}: {ex.Message}");
+
                 return;
             }
 
-            Unswizzle(source, linear, (int)width, (int)height, pitch, (int)blockHeightLog2);
-
-            DumpFrame(linear, (int)width, (int)height);
+            Nx2NativeObjects.Unswizzle(source, linear, (int)width, (int)height, pitch, (int)blockHeightLog2);
 
             // MKW draws into the top-left corner of its present images: 2560x1440 docked in
             // 3840x2160 images, 1920x1080 handheld.
-            int cropWidth = (int)Math.Min(width, 2560u);
-            int cropHeight = (int)Math.Min(height, 1440u);
+            int cropWidth = (int)Math.Min(width, MkwCropWidth);
+            int cropHeight = (int)Math.Min(height, MkwCropHeight);
 
             ImageCrop crop = new(0, cropWidth, 0, cropHeight, false, false, false, 1.0f, 1.0f);
 
@@ -379,14 +412,24 @@ namespace Ryujinx.HLE.HOS.Services.Am.AppletAE.AllSystemAppletProxiesService.Sys
 
         private static readonly object PresentLock = new();
         private static uint _previousFenceId = uint.MaxValue;
-        private static int _fenceLogs;
-        private static int _presentLogs;
-        private static int _lenLogs;
         private static uint _previousFenceValue;
         private static byte[] _sourceBuffer;
         private static byte[] _linearBuffer;
         private static int _presentCount;
         private static int _compositeLogs;
+        private static int _fenceLogs;
+        private static int _presentLogs;
+        private static int _lenLogs;
+
+        // MKW draws into the top-left corner of its present images; crop to the drawn area.
+        private const uint MkwCropWidth = 2560u;
+        private const uint MkwCropHeight = 1440u;
+
+        // All buffer slots reported free in the 229 reply.
+        private const uint AllSlotsFreeMask = 0x7fffu;
+
+        // Hardware syncpoint count; fence ids at or above it are not real syncpoints.
+        private const uint MaxSyncpoints = 192u;
 
         private static byte[] RentBuffer(ref byte[] buffer, int size)
         {
@@ -396,83 +439,6 @@ namespace Ryujinx.HLE.HOS.Services.Am.AppletAE.AllSystemAppletProxiesService.Sys
             }
 
             return buffer;
-        }
-
-        // Debug: dump the unswizzled present image as raw RGBA so it can be checked
-        // without an X capture. Remove with the rest of the NX2 diagnostics.
-        private static void DumpFrame(byte[] linear, int width, int height)
-        {
-            int count = System.Threading.Interlocked.Increment(ref _dumpCount);
-
-            if (count > 6 || count % 2 != 0)
-            {
-                return;
-            }
-
-            try
-            {
-                string path = $"/home/reng/projects/switch2-test/ryujinx-logs/frame-{count:D2}.rgba";
-                System.IO.File.WriteAllBytes(path, linear.AsSpan(0, width * height * 4).ToArray());
-            }
-            catch
-            {
-                // ignored
-            }
-        }
-
-        private static int _dumpCount;
-
-        private static uint SwizzleTable(uint pos)
-        {
-            ReadOnlySpan<uint> table =
-            [
-                0x12100200, 0x13110301, 0x16140604, 0x17150705,
-                0x1a180a08, 0x1b190b09, 0x1e1c0e0c, 0x1f1d0f0d,
-            ];
-
-            uint index = pos >> 4;
-            uint value = (table[(int)(index / 4)] >> (int)((index % 4) * 8)) & 0xff;
-
-            return (value << 4) | (pos & 0xf);
-        }
-
-        private static uint SwizzleOffset(uint byteX, uint y)
-        {
-            uint offset = SwizzleTable((y & 7) * 64 + (byteX & 63));
-
-            // Switch 2 "native tiling": the console's GOB swizzle differs from Maxwell's.
-            uint difference = ((offset >> 5) ^ (offset >> 6)) & 1;
-
-            return offset ^ ((difference << 5) | (difference << 6));
-        }
-
-        private static void Unswizzle(byte[] source, byte[] destination, int width, int height, ulong pitch, int blockHeightLog2)
-        {
-            int gobsInX = (int)(pitch / 64);
-            int blockHeight = Math.Max(blockHeightLog2 - 3, 0);
-            int blockHeightMask = (1 << blockHeight) - 1;
-            int blockSize = gobsInX << (9 + blockHeight);
-
-            for (int y = 0; y < height; y++)
-            {
-                int blockY = y >> 3;
-                int rowBase = ((blockY >> blockHeight) * blockSize) + ((blockY & blockHeightMask) << 9);
-                int destinationRow = y * width * 4;
-
-                for (int x = 0; x < width; x++)
-                {
-                    uint byteX = (uint)x * 4;
-                    int offset = rowBase + (int)((byteX >> 6) << (9 + blockHeight)) + (int)SwizzleOffset(byteX, (uint)y);
-
-                    int sourceIndex = offset;
-                    int destinationIndex = destinationRow + x * 4;
-
-                    destination[destinationIndex + 0] = source[sourceIndex + 0];
-                    destination[destinationIndex + 1] = source[sourceIndex + 1];
-                    destination[destinationIndex + 2] = source[sourceIndex + 2];
-                    destination[destinationIndex + 3] = source[sourceIndex + 3];
-                }
-            }
         }
     }
 }
