@@ -1,5 +1,12 @@
 // Behavior ported from Eglantine (Eden fork) Switch 2 support; see NX2_NOTES.md there.
+using Ryujinx.Common.Logging;
+using Ryujinx.HLE.HOS.Ipc;
+using Ryujinx.HLE.HOS.Kernel.Memory;
+using Ryujinx.HLE.HOS.Kernel.Threading;
 using Ryujinx.HLE.HOS.Services.Nv;
+using Ryujinx.HLE.HOS.Services.Nv.NvDrvServices.NvHostCtrl;
+using Ryujinx.Horizon.Common;
+using Ryujinx.Memory;
 using System;
 
 namespace Ryujinx.HLE.HOS.Services.Am.AppletAE.AllSystemAppletProxiesService.SystemAppletProxy
@@ -12,8 +19,40 @@ namespace Ryujinx.HLE.HOS.Services.Am.AppletAE.AllSystemAppletProxiesService.Sys
         [CommandTipc(4)]
         public ResultCode Boot(ServiceCtx context)
         {
+            // Log full TIPC header + payload + caller stack to locate the render-gate caller.
+            try {
+                long pos = context.RequestData.BaseStream.Position;
+                int rawLen = (int)context.RequestData.BaseStream.Length;
+                context.RequestData.BaseStream.Seek(0, System.IO.SeekOrigin.Begin);
+                int nw = rawLen/4;
+                uint[] req = new uint[nw];
+                for (int i=0;i<nw;i++) req[i]=context.RequestData.ReadUInt32();
+                context.RequestData.BaseStream.Seek(pos, System.IO.SeekOrigin.Begin);
+                var hd = context.Request.HandleDesc;
+                string hdStr = hd == null ? "none" : $"pid={hd.HasPId}:{hd.PId:X} copy=[{string.Join(",", hd.ToCopy)}] move=[{string.Join(",", hd.ToMove)}]";
+                Ryujinx.Common.Logging.Logger.Warning?.Print(Ryujinx.Common.Logging.LogClass.ServiceAm,
+                    $"NX2 GSV4 Boot reqlen={rawLen} words={string.Join(" ", System.Array.ConvertAll(req, x => $"0x{x:X8}"))} hd={hdStr}");
+
+                var t = context.Thread;
+                if (t?.Context != null) {
+                    var mem = t.Owner.CpuMemory;
+                    ulong pc = t.Context.Pc, lr = t.Context.GetX(30), fp = t.Context.GetX(29), sp = t.Context.GetX(31);
+                    Ryujinx.Common.Logging.Logger.Warning?.Print(Ryujinx.Common.Logging.LogClass.ServiceAm,
+                        $"NX2 GSV4 caller pc=0x{pc:X} lr=0x{lr:X} sp=0x{sp:X} x0=0x{t.Context.GetX(0):X} x1=0x{t.Context.GetX(1):X} x2=0x{t.Context.GetX(2):X}");
+                    ulong frame = fp;
+                    for (int i=0;i<8 && frame!=0 && frame < 0x2000000000UL;i++) {
+                        try {
+                            ulong next = mem.Read<ulong>(frame);
+                            ulong ret  = mem.Read<ulong>(frame+8);
+                            Ryujinx.Common.Logging.Logger.Warning?.Print(Ryujinx.Common.Logging.LogClass.ServiceAm,
+                                $"NX2 GSV4 stack[{i}] fp=0x{frame:X} ret=0x{ret:X}");
+                            if (next <= frame || next - frame > 0x10000) break;
+                            frame = next;
+                        } catch { break; }
+                    }
+                }
+            } catch (Exception ex) { Ryujinx.Common.Logging.Logger.Warning?.Print(Ryujinx.Common.Logging.LogClass.ServiceAm, $"NX2 GSV4 log fail: {ex.GetType().Name}"); }
             // Eglantine Stub: ResponseBuilder rb{ctx, 2}; rb.Push(ResultSuccess);
-            // pushes result + one extra zero word. The game reads this extra word.
             context.ResponseData.BaseStream.Seek(4, System.IO.SeekOrigin.Begin);
             context.ResponseData.Write(0u);
             return ResultCode.Success;
@@ -99,6 +138,30 @@ namespace Ryujinx.HLE.HOS.Services.Am.AppletAE.AllSystemAppletProxiesService.Sys
             context.ResponseData.BaseStream.Seek(4, System.IO.SeekOrigin.Begin);
             context.ResponseData.Write((uint)size);
             context.ResponseData.Write((uint)(size >> 32));
+
+            return ResultCode.Success;
+        }
+
+        // Eglantine CalculateRequirements: the client passes a 0x40-byte
+        // InterModuleUserImagePreference (16 words) plus a u32 and expects the block-linear image
+        // size and alignment. A zero size made the window init fail, after which
+        // wsi::NativeWindow::Acquire dereferenced a null window (NX2_NOTES #33).
+        [CommandTipc(1510)]
+        public ResultCode CalculateRequirements(ServiceCtx context)
+        {
+            uint[] preference = ReadPreference(context);
+            _ = context.RequestData.ReadUInt32();
+            (_, _, _, uint blockHeightLog2, ulong size) = Nx2NativeObjects.Layout(preference);
+            ulong alignment = Math.Max(64UL << (int)blockHeightLog2, 0x1000UL);
+
+            Logger.Warning?.Print(LogClass.ServiceAm,
+                $"nx2:gsv 1510 kind={preference[1]} size=0x{size:X} align=0x{alignment:X}");
+
+            context.ResponseData.BaseStream.Seek(4, System.IO.SeekOrigin.Begin);
+            context.ResponseData.Write((uint)size);
+            context.ResponseData.Write((uint)(size >> 32));
+            context.ResponseData.Write((uint)alignment);
+            context.ResponseData.Write((uint)(alignment >> 32));
 
             return ResultCode.Success;
         }
@@ -264,9 +327,145 @@ namespace Ryujinx.HLE.HOS.Services.Am.AppletAE.AllSystemAppletProxiesService.Sys
             return ResultCode.Success;
         }
 
+        // Offsets inside the client's read-only syncpoint page. The guest requires version 1 at
+        // +0 and count such that ((count + 0x40) >> 6) - 1 < 0x40.
+        private const uint SyncptValuesOffset = 0x40;
+        private const uint SyncptRwSummaryOffset = 0x0;
+        private const uint SyncptRoSummaryOffset = 0x1040;
+        private const uint SyncptRwBitsOffset = 0x100;
+        private const uint SyncptRoBitsOffset = 0x1100;
+        private const uint SyncptPageSize = 0x2000;
+        private const uint HostSyncpoints = 192;
+
+        private readonly object _syncptLock = new();
+        private IVirtualMemoryManager _syncptMemory;
+        private NvHostSyncpt _syncptHost;
+        private ulong _syncptRw;
+        private ulong _syncptRo;
+        private uint _syncptCount;
+        private KEvent _syncptNotify;
+        private System.Threading.Timer _syncptTimer;
+        private bool _syncptFaulted;
+
+        // Mirrors the host syncpoint values into the shared RO page and acknowledges the armed
+        // bits, exactly like Eglantine's 500 us poll. Without the acknowledge the client's wait
+        // on the notify event never completes and the frame loop parks forever.
+        private void PollSyncpts()
+        {
+            lock (_syncptLock)
+            {
+                if (_syncptMemory == null || _syncptFaulted)
+                {
+                    return;
+                }
+
+                try
+                {
+                    for (uint id = 0; id < Math.Min(_syncptCount, HostSyncpoints); id++)
+                    {
+                        _syncptMemory.Write(_syncptRo + SyncptValuesOffset + id * 8, (ulong)_syncptHost.ReadSyncpointValue(id));
+                    }
+
+                    bool acked = false;
+                    uint words = (_syncptCount + 63) / 64;
+
+                    for (uint w = 0; w < words; w++)
+                    {
+                        ulong rwBits = _syncptMemory.Read<ulong>(_syncptRw + SyncptRwBitsOffset + w * 8);
+                        ulong roAddress = _syncptRo + SyncptRoBitsOffset + w * 8;
+
+                        if (_syncptMemory.Read<ulong>(roAddress) != rwBits)
+                        {
+                            _syncptMemory.Write(roAddress, rwBits);
+                            acked = true;
+                        }
+                    }
+
+                    _syncptMemory.Write(_syncptRo + SyncptRoSummaryOffset,
+                        _syncptMemory.Read<ulong>(_syncptRw + SyncptRwSummaryOffset));
+
+                    if (acked)
+                    {
+                        _syncptNotify.ReadableEvent.Signal();
+                    }
+                }
+                catch (Exception ex)
+                {
+                    // The client may close the transfer memories while tearing down.
+                    _syncptFaulted = true;
+                    Logger.Warning?.Print(LogClass.ServiceAm, $"nx2:gsv 204 syncpt poll stopped: {ex.GetType().Name}: {ex.Message}");
+                }
+            }
+        }
+
+        // Eglantine AttachSyncptMemory: the client passes an RW (0x1000) and an RO (0x2000)
+        // transfer memory and expects a header in the RO page plus two events. It signals the
+        // first event after arming a wait in the RW page and waits on the second until the
+        // server copies the armed bits and summary into the RO page.
         [CommandTipc(204)]
         public ResultCode AttachSyncptMemory(ServiceCtx context)
         {
+            uint versionRequested = context.RequestData.ReadUInt32();
+            uint maxSyncpoints = Math.Min(context.RequestData.ReadUInt32(), (0x1000 - SyncptValuesOffset) / 8);
+
+            IpcHandleDesc handleDesc = context.Request.HandleDesc;
+
+            if (handleDesc == null || handleDesc.ToCopy.Length < 2)
+            {
+                Logger.Warning?.Print(LogClass.ServiceAm, "nx2:gsv 204 missing transfer memory handles");
+                return ResultCode.InvalidParameters;
+            }
+
+            KTransferMemory rw = context.Process.HandleTable.GetObject<KTransferMemory>(handleDesc.ToCopy[0]);
+            KTransferMemory ro = context.Process.HandleTable.GetObject<KTransferMemory>(handleDesc.ToCopy[1]);
+
+            if (rw == null || ro == null || ro.Size < SyncptPageSize)
+            {
+                Logger.Warning?.Print(LogClass.ServiceAm,
+                    $"nx2:gsv 204 invalid syncpt memory rw={rw?.Size:X} ro={ro?.Size:X}");
+                return ResultCode.InvalidParameters;
+            }
+
+            // The server owns the RO page through the creator's address space.
+            IVirtualMemoryManager memory = ro.Creator.CpuMemory;
+
+            memory.Write(ro.Address + 0x00, 1u); // version
+            memory.Write(ro.Address + 0x04, 0u); // base id
+            memory.Write(ro.Address + 0x08, maxSyncpoints);
+            memory.Write(ro.Address + 0x0c, SyncptValuesOffset);
+            memory.Write(ro.Address + 0x10, SyncptRwSummaryOffset);
+            memory.Write(ro.Address + 0x14, SyncptRoSummaryOffset);
+            memory.Write(ro.Address + 0x18, SyncptRwBitsOffset);
+            memory.Write(ro.Address + 0x1c, SyncptRoBitsOffset);
+
+            KEvent requestEvent = new(context.Device.System.KernelContext);
+            KEvent notifyEvent = new(context.Device.System.KernelContext);
+
+            lock (_syncptLock)
+            {
+                _syncptMemory = memory;
+                _syncptHost = context.Device.System.HostSyncpoint;
+                _syncptRw = rw.Address;
+                _syncptRo = ro.Address;
+                _syncptCount = maxSyncpoints;
+                _syncptNotify = notifyEvent;
+                _syncptFaulted = false;
+                _syncptTimer ??= new System.Threading.Timer(_ => PollSyncpts(), null, 0, 1);
+            }
+
+            if (context.Process.HandleTable.GenerateHandle(requestEvent.WritableEvent, out int requestHandle) != Result.Success ||
+                context.Process.HandleTable.GenerateHandle(notifyEvent.ReadableEvent, out int notifyHandle) != Result.Success)
+            {
+                throw new InvalidOperationException("Out of handles!");
+            }
+
+            Logger.Warning?.Print(LogClass.ServiceAm,
+                $"nx2:gsv 204 version={versionRequested} max_syncpoints={maxSyncpoints} rw=0x{rw.Address:X} ro=0x{ro.Address:X}");
+
+            context.Response.HandleDesc = IpcHandleDesc.MakeCopy(requestHandle, notifyHandle);
+            context.ResponseData.BaseStream.Seek(4, System.IO.SeekOrigin.Begin);
+            context.ResponseData.Write(0u);
+
             return ResultCode.Success;
         }
 
