@@ -101,8 +101,10 @@ namespace Ryujinx.HLE.HOS.Services.Am.AppletAE.AllSystemAppletProxiesService.Sys
                 cpu = $"unavailable: {ex.GetType().Name}";
             }
 
-            if (_progressTicks == 3600 && _dumpKernel != null)
+            if (_dumpKernel != null && !_mainStackDumped && Nx2Counters.Submits >= 8 && _progressTicks >= 3000)
             {
+                _mainStackDumped = true;
+
                 foreach (Ryujinx.HLE.HOS.Kernel.Process.KProcess procEntry in _dumpKernel.Processes.Values)
                 {
                     if (procEntry.Pid != 109)
@@ -477,6 +479,7 @@ namespace Ryujinx.HLE.HOS.Services.Am.AppletAE.AllSystemAppletProxiesService.Sys
         private static uint _previousFenceId = uint.MaxValue;
         private static Ryujinx.HLE.HOS.Kernel.KernelContext _dumpKernel;
         private static int _event11Logs;
+        private static bool _mainStackDumped;
         private static uint _previousFenceValue;
         private static byte[] _sourceBuffer;
         private static byte[] _linearBuffer;
