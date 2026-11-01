@@ -28,7 +28,6 @@ namespace Ryujinx.HLE.HOS.Services.Nv
     {
         // Diagnostic: per-ioctl counts, printed with the NX2 progress line.
         public static readonly System.Collections.Concurrent.ConcurrentDictionary<string, int> IoctlCounts = [];
-        private int _nx2Ioctl17Trace;
 
         private static readonly List<string> _deviceFileDebugRegistry =
         [
@@ -52,7 +51,7 @@ namespace Ryujinx.HLE.HOS.Services.Nv
             { "/dev/nvhost-dbg-gpu",  typeof(NvHostDbgGpuDeviceFile)  },
             { "/dev/nvhost-prof-gpu", typeof(NvHostProfGpuDeviceFile) },
         };
-        
+
         private static readonly ArrayPool<byte> _byteArrayPool = ArrayPool<byte>.Create();
 
         public static IdDictionary DeviceFileIdRegistry = new();
@@ -64,7 +63,7 @@ namespace Ryujinx.HLE.HOS.Services.Nv
 
         // TODO: This should call set:sys::GetDebugModeFlag
         private readonly bool _debugModeEnabled = false;
-        
+
         private byte[] _ioctl2Buffer = [];
         private byte[] _ioctlArgumentBuffer = [];
         private byte[] _ioctl3Buffer = [];
@@ -156,7 +155,7 @@ namespace Ryujinx.HLE.HOS.Services.Nv
                     {
                         Array.Resize(ref _ioctlArgumentBuffer, (int)inputDataSize);
                     }
-                    
+
                     arguments = _ioctlArgumentBuffer.AsSpan(0, (int)inputDataSize);
 
                     context.Memory.Read(inputDataPosition, arguments);
@@ -168,7 +167,7 @@ namespace Ryujinx.HLE.HOS.Services.Nv
                 {
                     Array.Resize(ref _ioctlArgumentBuffer, (int)outputDataSize);
                 }
-                    
+
                 arguments = _ioctlArgumentBuffer.AsSpan(0, (int)outputDataSize);
             }
             else
@@ -179,7 +178,7 @@ namespace Ryujinx.HLE.HOS.Services.Nv
                     {
                         Array.Resize(ref _ioctlArgumentBuffer, (int)inputDataSize);
                     }
-                    
+
                     arguments = _ioctlArgumentBuffer.AsSpan(0, (int)inputDataSize);
 
                     context.Memory.Read(inputDataPosition, arguments);
@@ -515,14 +514,14 @@ namespace Ryujinx.HLE.HOS.Services.Nv
                 (ulong inlineInBufferPosition, ulong inlineInBufferSize) = context.Request.GetBufferType0x21(1);
 
                 errorCode = GetIoctlArgument(context, ioctlCommand, out Span<byte> arguments);
-                
+
                 if (!context.Memory.TryReadUnsafe(inlineInBufferPosition, (int)inlineInBufferSize, out Span<byte> inlineInBufferSpan))
                 {
                     if (_ioctl2Buffer.Length < (int)inlineInBufferSize)
                     {
                         Array.Resize(ref _ioctl2Buffer, (int)inlineInBufferSize);
                     }
-                    
+
                     inlineInBufferSpan = _ioctl2Buffer.AsSpan(0, (int)inlineInBufferSize);
                     context.Memory.Read(inlineInBufferPosition, inlineInBufferSpan);
                 }
@@ -577,14 +576,14 @@ namespace Ryujinx.HLE.HOS.Services.Nv
                 (ulong inlineOutBufferPosition, ulong inlineOutBufferSize) = context.Request.GetBufferType0x22(1);
 
                 errorCode = GetIoctlArgument(context, ioctlCommand, out Span<byte> arguments);
-                
+
                 if (!context.Memory.TryReadUnsafe(inlineOutBufferPosition, (int)inlineOutBufferSize, out Span<byte> inlineOutBufferSpan))
                 {
                     if (_ioctl3Buffer.Length < (int)inlineOutBufferSize)
                     {
                         Array.Resize(ref _ioctl3Buffer, (int)inlineOutBufferSize);
                     }
-                    
+
                     inlineOutBufferSpan = _ioctl3Buffer.AsSpan(0, (int)inlineOutBufferSize);
                     context.Memory.Read(inlineOutBufferPosition, inlineOutBufferSpan);
                 }
