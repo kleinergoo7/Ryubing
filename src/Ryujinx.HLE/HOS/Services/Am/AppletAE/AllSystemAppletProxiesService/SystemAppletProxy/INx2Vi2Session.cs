@@ -254,6 +254,49 @@ namespace Ryujinx.HLE.HOS.Services.Am.AppletAE.AllSystemAppletProxiesService.Sys
 
             _dumpKernel ??= context.Device.System.KernelContext;
 
+            // Diagnostic: capture MainThread's LR and stack at Present time to find the
+            // render call chain (whether 0xc2063c / vtable dispatch is on the path).
+            if (Nx2Counters.Presents == 2000 && _dumpKernel != null)
+            {
+                foreach (Ryujinx.HLE.HOS.Kernel.Process.KProcess procEntry in _dumpKernel.Processes.Values)
+                {
+                    if (procEntry.Pid != 109)
+                    {
+                        continue;
+                    }
+
+                    foreach (Ryujinx.HLE.HOS.Kernel.Threading.KThread thread in procEntry.DebugThreads)
+                    {
+                        if (thread.ThreadUid != 28)
+                        {
+                            continue;
+                        }
+
+                        Ryujinx.Common.Logging.Logger.Warning?.Print(Ryujinx.Common.Logging.LogClass.ServiceVi,
+                            $"NX2 Present@2000 LR=0x{thread.Context.Lr:X} PC=0x{thread.Context.Pc:X} SP=0x{thread.Context.Sp:X}");
+
+                        // Read 8 words from SP
+                        try
+                        {
+                            System.Text.StringBuilder sb = new("NX2 Present@2000 stack:");
+                            for (int i = 0; i < 8; i++)
+                            {
+                                ulong addr = thread.Context.Sp + (ulong)(i * 8);
+                                Ryujinx.Memory.IVirtualMemoryManager vmm = procEntry.CpuMemory;
+                                ulong val = vmm.Read<ulong>(addr);
+                                sb.Append($" 0x{val:X}");
+                            }
+                            Ryujinx.Common.Logging.Logger.Warning?.Print(Ryujinx.Common.Logging.LogClass.ServiceVi, sb.ToString());
+                        }
+                        catch (Exception ex)
+                        {
+                            Ryujinx.Common.Logging.Logger.Warning?.Print(Ryujinx.Common.Logging.LogClass.ServiceVi,
+                                $"NX2 Present@2000 stack read failed: {ex.GetType().Name}");
+                        }
+                    }
+                }
+            }
+
             if (!_mainStackDumped && Nx2Counters.Presents == 2000)
             {
                 _mainStackDumped = true;
