@@ -8,10 +8,13 @@ namespace Ryujinx.HLE.HOS.Kernel.Threading
         private static int _idCounter;
         public int EventId { get; } = System.Threading.Interlocked.Increment(ref _idCounter);
 
+        public static readonly System.Collections.Concurrent.ConcurrentBag<KReadableEvent> All = new();
+
         private bool _signaled;
 
         public KReadableEvent(KernelContext context) : base(context)
         {
+            All.Add(this);
             Ryujinx.Common.Logging.Logger.Info?.Print(Ryujinx.Common.Logging.LogClass.KernelSvc,
                 $"KReadableEvent created id={EventId} hash={System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(this)}");
         }

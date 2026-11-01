@@ -38,6 +38,15 @@ namespace Ryujinx.HLE.HOS.Services.Am.AppletAE.AllSystemAppletProxiesService.Sys
                         }
                     }
 
+                    // WORKAROUND: the game blocks on an early system event (id=2) that is
+                    // never signalled by any service. Signal every KReadableEvent each tick
+                    // so such waits cannot stall the main loop. Revisit if a title depends
+                    // on an event staying unsignalled.
+                    foreach (Ryujinx.HLE.HOS.Kernel.Threading.KReadableEvent evt in Ryujinx.HLE.HOS.Kernel.Threading.KReadableEvent.All)
+                    {
+                        evt.Signal();
+                    }
+
                     Ryujinx.HLE.HOS.Services.Nv.NvDrvServices.NvHostChannel.NvHostGpuDeviceFile.SignalAllNx2Events();
                     INx2GpuSession.SignalAllNx2GpuEvents();
 
