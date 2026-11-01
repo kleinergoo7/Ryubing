@@ -284,6 +284,11 @@ namespace Ryujinx.HLE.HOS.Services.Am.AppletAE.AllSystemAppletProxiesService.Sys
 
             _dumpKernel ??= context.Device.System.KernelContext;
             Ryujinx.HLE.HOS.Kernel.KernelStatic.GlobalContext ??= context.Device.System.KernelContext;
+            if (Ryujinx.HLE.HOS.Kernel.KernelStatic.GlobalContext != null && System.Threading.Interlocked.Increment(ref _gcLogs) == 1)
+            {
+                Ryujinx.Common.Logging.Logger.Warning?.Print(Ryujinx.Common.Logging.LogClass.ServiceVi,
+                    $"NX2 GlobalContext set: {Ryujinx.HLE.HOS.Kernel.KernelStatic.GlobalContext != null}, processes={Ryujinx.HLE.HOS.Kernel.KernelStatic.GlobalContext.Processes.Count}");
+            }
             if (_dumpKernel != null && System.Threading.Interlocked.Increment(ref _dumpKernelLogs) == 1)
             {
                 Ryujinx.Common.Logging.Logger.Warning?.Print(Ryujinx.Common.Logging.LogClass.ServiceVi,
@@ -530,6 +535,7 @@ namespace Ryujinx.HLE.HOS.Services.Am.AppletAE.AllSystemAppletProxiesService.Sys
         private static int _event11Logs;
         private static bool _mainStackDumped;
         private static int _dumpKernelLogs;
+        private static int _gcLogs;
         private static uint _previousFenceValue;
         private static byte[] _sourceBuffer;
         private static byte[] _linearBuffer;
