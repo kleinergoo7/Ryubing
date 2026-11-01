@@ -44,6 +44,9 @@ namespace Ryujinx.HLE.HOS.Services.Am.AppletAE.AllSystemAppletProxiesService.Sys
                     {
                         Ryujinx.HLE.HOS.Kernel.KernelContext kc = _dumpKernel;
 
+                        Ryujinx.Common.Logging.Logger.Warning?.Print(Ryujinx.Common.Logging.LogClass.ServiceVi,
+                            $"NX2 tick: dumpKernel={(kc != null)}, mainThreadWaitingSync check");
+
                         if (kc != null)
                         {
                             foreach (System.Collections.Generic.KeyValuePair<ulong, Ryujinx.HLE.HOS.Kernel.Process.KProcess> pe in kc.Processes)
