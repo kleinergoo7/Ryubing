@@ -71,8 +71,38 @@ namespace Ryujinx.HLE.HOS.Services.Am.AppletAE.AllSystemAppletProxiesService.Sys
                     Ryujinx.HLE.HOS.Kernel.SupervisorCall.Syscall.GuestCallSites, kv => kv.Value), 8),
                 kv => $"pid{kv.Key.Pid}:0x{kv.Key.Pc:X}={kv.Value}"));
 
+            string cpu = "";
+
+            try
+            {
+                System.Collections.Generic.List<(ulong Tid, long Ticks, ulong Pc)> times = [];
+
+                foreach (System.Collections.Generic.KeyValuePair<ulong, Ryujinx.HLE.HOS.Kernel.Process.KProcess> procEntry in _dumpKernel.Processes)
+                {
+                    if (procEntry.Key != 109)
+                    {
+                        continue;
+                    }
+
+                    foreach (Ryujinx.HLE.HOS.Kernel.Threading.KThread thread in procEntry.Value.DebugThreads)
+                    {
+                        times.Add((thread.ThreadUid, thread.TotalTimeRunning, thread.Context.Pc));
+                    }
+                }
+
+                times.Sort((a, b) => b.Ticks.CompareTo(a.Ticks));
+
+                cpu = string.Join(' ', System.Linq.Enumerable.Select(
+                    System.Linq.Enumerable.Take(times, 6),
+                    t => $"{t.Tid}={t.Ticks / 10000000.0:F1}s@0x{t.Pc:X}"));
+            }
+            catch (Exception ex)
+            {
+                cpu = $"unavailable: {ex.GetType().Name}";
+            }
+
             Ryujinx.Common.Logging.Logger.Warning?.Print(Ryujinx.Common.Logging.LogClass.ServiceVi,
-                $"NX2 progress t={_progressTicks / 60}s submits={Nx2Counters.Submits} presents={Nx2Counters.Presents} sparseCommit={Ryujinx.Graphics.Gpu.Memory.Nx2GpuMemory.SparseCommitted >> 20}MiB dropped={Ryujinx.Graphics.Gpu.Memory.Nx2GpuMemory.SparseDropped >> 20}MiB sites=[{sites}] gpu=[{gpu}]");
+                $"NX2 progress t={_progressTicks / 60}s submits={Nx2Counters.Submits} presents={Nx2Counters.Presents} sparseCommit={Ryujinx.Graphics.Gpu.Memory.Nx2GpuMemory.SparseCommitted >> 20}MiB dropped={Ryujinx.Graphics.Gpu.Memory.Nx2GpuMemory.SparseDropped >> 20}MiB cpu=[{cpu}] sites=[{sites}] gpu=[{gpu}]");
         }
 
         private KEvent EventFor(ServiceCtx context, uint slot)
@@ -182,6 +212,8 @@ namespace Ryujinx.HLE.HOS.Services.Am.AppletAE.AllSystemAppletProxiesService.Sys
             uint imageId = context.RequestData.ReadUInt32();
 
             System.Threading.Interlocked.Increment(ref Nx2Counters.Presents);
+
+            _dumpKernel ??= context.Device.System.KernelContext;
 
             if (System.Threading.Interlocked.Increment(ref _presentLogs) <= 8)
             {
@@ -419,6 +451,7 @@ namespace Ryujinx.HLE.HOS.Services.Am.AppletAE.AllSystemAppletProxiesService.Sys
 
         private static readonly object PresentLock = new();
         private static uint _previousFenceId = uint.MaxValue;
+        private static Ryujinx.HLE.HOS.Kernel.KernelContext _dumpKernel;
         private static int _event11Logs;
         private static uint _previousFenceValue;
         private static byte[] _sourceBuffer;
