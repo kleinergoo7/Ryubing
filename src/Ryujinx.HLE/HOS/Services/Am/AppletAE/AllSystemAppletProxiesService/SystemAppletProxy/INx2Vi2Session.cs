@@ -43,6 +43,8 @@ namespace Ryujinx.HLE.HOS.Services.Am.AppletAE.AllSystemAppletProxiesService.Sys
 
                     if (be != null)
                     {
+                        Ryujinx.Common.Logging.Logger.Warning?.Print(Ryujinx.Common.Logging.LogClass.ServiceVi,
+                            $"NX2 tick: signalling BlockedEvent id={be.EventId}");
                         be.Signal();
                     }
 
