@@ -110,7 +110,14 @@ namespace Ryujinx.HLE.HOS.Services.Am.AppletAE.AllSystemAppletProxiesService.Sys
         {
             KEvent evt = EventFor(context, 0);
 
-            TrackTickEvent(evt);
+            // The oracle never signals this event; only the 31/32 vsync events tick.
+            // Signalling it spuriously kept the guest's main loop spinning in its
+            // handler instead of advancing to render submission.
+            if (System.Threading.Interlocked.Increment(ref _event11Logs) <= 2)
+            {
+                Ryujinx.Common.Logging.Logger.Warning?.Print(Ryujinx.Common.Logging.LogClass.ServiceVi,
+                    "NX2 vi2 command 11 event handed out unsignalled");
+            }
 
             if (context.Process.HandleTable.GenerateHandle(evt.ReadableEvent, out int handle) != Ryujinx.Horizon.Common.Result.Success)
             {
@@ -412,6 +419,7 @@ namespace Ryujinx.HLE.HOS.Services.Am.AppletAE.AllSystemAppletProxiesService.Sys
 
         private static readonly object PresentLock = new();
         private static uint _previousFenceId = uint.MaxValue;
+        private static int _event11Logs;
         private static uint _previousFenceValue;
         private static byte[] _sourceBuffer;
         private static byte[] _linearBuffer;
