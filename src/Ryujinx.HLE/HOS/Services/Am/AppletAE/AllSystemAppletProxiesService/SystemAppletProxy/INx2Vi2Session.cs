@@ -38,13 +38,41 @@ namespace Ryujinx.HLE.HOS.Services.Am.AppletAE.AllSystemAppletProxiesService.Sys
                         }
                     }
 
-                    // WORKAROUND: the game blocks on an early system event (id=2) that is
-                    // never signalled by any service. Signal every KReadableEvent each tick
-                    // so such waits cannot stall the main loop. Revisit if a title depends
-                    // on an event staying unsignalled.
-                    foreach (Ryujinx.HLE.HOS.Kernel.Threading.KReadableEvent evt in Ryujinx.HLE.HOS.Kernel.Threading.KReadableEvent.All)
+                    // Targeted: find the KReadableEvent MainThread is blocked on (infinite
+                    // wait) and signal only that one, so unrelated events stay unsignalled.
+                    try
                     {
-                        evt.Signal();
+                        Ryujinx.HLE.HOS.Kernel.KernelContext kc = _dumpKernel;
+
+                        if (kc != null)
+                        {
+                            foreach (System.Collections.Generic.KeyValuePair<ulong, Ryujinx.HLE.HOS.Kernel.Process.KProcess> pe in kc.Processes)
+                            {
+                                if (pe.Key != 109)
+                                {
+                                    continue;
+                                }
+
+                                foreach (Ryujinx.HLE.HOS.Kernel.Threading.KThread th in pe.Value.DebugThreads)
+                                {
+                                    if (th.ThreadUid != 28 || !th.WaitingSync)
+                                    {
+                                        continue;
+                                    }
+
+                                    foreach (Ryujinx.HLE.HOS.Kernel.Common.KSynchronizationObject so in th.WaitSyncObjects)
+                                    {
+                                        if (so is Ryujinx.HLE.HOS.Kernel.Threading.KReadableEvent kre)
+                                        {
+                                            kre.Signal();
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    catch
+                    {
                     }
 
                     Ryujinx.HLE.HOS.Services.Nv.NvDrvServices.NvHostChannel.NvHostGpuDeviceFile.SignalAllNx2Events();
