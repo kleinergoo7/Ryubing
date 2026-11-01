@@ -114,7 +114,7 @@ namespace Ryujinx.HLE.HOS.Services.Am.AppletAE.AllSystemAppletProxiesService.Sys
                 cpu = $"unavailable: {ex.GetType().Name}";
             }
 
-            if (_dumpKernel != null && !_mainStackDumped && Nx2Counters.Submits >= 8 && _progressTicks >= 3000)
+            if (false)
             {
                 _mainStackDumped = true;
 
@@ -253,6 +253,32 @@ namespace Ryujinx.HLE.HOS.Services.Am.AppletAE.AllSystemAppletProxiesService.Sys
             System.Threading.Interlocked.Increment(ref Nx2Counters.Presents);
 
             _dumpKernel ??= context.Device.System.KernelContext;
+
+            if (!_mainStackDumped && Nx2Counters.Presents == 2000)
+            {
+                _mainStackDumped = true;
+
+                foreach (Ryujinx.HLE.HOS.Kernel.Process.KProcess procEntry in _dumpKernel.Processes.Values)
+                {
+                    if (procEntry.Pid != 109)
+                    {
+                        continue;
+                    }
+
+                    foreach (Ryujinx.HLE.HOS.Kernel.Threading.KThread thread in procEntry.DebugThreads)
+                    {
+                        if (thread.ThreadUid != 28)
+                        {
+                            continue;
+                        }
+
+                        string trace = thread.GetGuestStackTrace();
+
+                        Ryujinx.Common.Logging.Logger.Warning?.Print(Ryujinx.Common.Logging.LogClass.ServiceVi,
+                            $"NX2 MainThread@2000presents pc=0x{thread.Context.Pc:X} stack:\n{trace}");
+                    }
+                }
+            }
             Ryujinx.HLE.HOS.Kernel.KernelStatic.GlobalContext ??= context.Device.System.KernelContext;
             if (Ryujinx.HLE.HOS.Kernel.KernelStatic.GlobalContext != null && System.Threading.Interlocked.Increment(ref _gcLogs) == 1)
             {
