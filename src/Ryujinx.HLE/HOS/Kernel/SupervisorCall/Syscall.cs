@@ -24,6 +24,7 @@ namespace Ryujinx.HLE.HOS.Kernel.SupervisorCall
         private static readonly bool WaitLogEnabled = System.Environment.GetEnvironmentVariable("NX2_WAIT_LOG") == "1";
         private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, byte> WaitSiteLogged = [];
         private static readonly long[] _waitLogLast = new long[256];
+        private static int _threadCreateLogs;
 
         public Syscall(KernelContext context)
         {
@@ -2603,6 +2604,16 @@ namespace Ryujinx.HLE.HOS.Kernel.SupervisorCall
                 KProcess process = KernelStatic.GetCurrentProcess();
 
                 result = process.HandleTable.GenerateHandle(thread, out handle);
+
+                // Diagnostic: who creates guest threads, bounded. The render/submit thread
+                // must appear here; if it never does, game init stalled before creating it.
+                if (System.Threading.Interlocked.Increment(ref _threadCreateLogs) <= 60)
+                {
+                    KThread creator = KernelStatic.GetCurrentThread();
+
+                    Logger.Warning?.Print(LogClass.KernelSvc,
+                        $"NX2 thread created pid={process.Pid} tid={thread.ThreadUid} entry=0x{entrypoint:X} prio={priority} core={cpuCore} by tid={creator?.ThreadUid} pc=0x{creator?.Context.Pc:X}");
+                }
             }
             else
             {
