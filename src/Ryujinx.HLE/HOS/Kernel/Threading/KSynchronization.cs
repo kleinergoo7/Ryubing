@@ -134,6 +134,12 @@ namespace Ryujinx.HLE.HOS.Kernel.Threading
                 {
                     KThread thread = node.Value;
 
+                    if (hash == 3030563)
+                    {
+                        Ryujinx.Common.Logging.Logger.Warning?.Print(Ryujinx.Common.Logging.LogClass.KernelSvc,
+                            $"NX2 SignalObject hash={hash} thread={thread.ThreadUid} schedFlags=0x{thread.SchedFlags:X} signaledObj={thread.SignaledObj != null}");
+                    }
+
                     if ((thread.SchedFlags & ThreadSchedState.LowMask) == ThreadSchedState.Paused)
                     {
                         thread.SignaledObj = syncObj;
