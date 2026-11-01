@@ -53,7 +53,23 @@ namespace Ryujinx.HLE.HOS.Services.Am.AppletAE.AllSystemAppletProxiesService.Sys
                         if (pc != 0xC38437C && pc != 0xC3840E4 && pc != 0xC38416C)
                         {
                             Ryujinx.Common.Logging.Logger.Warning?.Print(Ryujinx.Common.Logging.LogClass.ServiceVi,
-                                $"NX2 MT ACTIVE pc=0x{pc:X} lr=0x{MainThreadRef.Context.GetX(30):X} x0=0x{MainThreadRef.Context.GetX(0):X} x1=0x{MainThreadRef.Context.GetX(1):X} x2=0x{MainThreadRef.Context.GetX(2):X} x3=0x{MainThreadRef.Context.GetX(3):X} x4=0x{MainThreadRef.Context.GetX(4):X} x5=0x{MainThreadRef.Context.GetX(5):X}");
+                                $"NX2 MT ACTIVE pc=0x{pc:X} lr=0x{MainThreadRef.Context.GetX(30):X} x0=0x{MainThreadRef.Context.GetX(0):X} x1=0x{MainThreadRef.Context.GetX(1):X} x2=0x{MainThreadRef.Context.GetX(2):X} x3=0x{MainThreadRef.Context.GetX(3):X} x4=0x{MainThreadRef.Context.GetX(4):X}");
+
+                            // Read the global table at 0xb8fcc80
+                            try
+                            {
+                                Ryujinx.Memory.IVirtualMemoryManager vmm = MainThreadRef.Owner.CpuMemory;
+                                ulong flag = vmm.Read<ulong>(0xb8fcc80);
+                                ulong table = vmm.Read<ulong>(0xb8fcc88);
+                                ulong fnptr = table != 0 ? vmm.Read<ulong>(table) : 0;
+                                Ryujinx.Common.Logging.Logger.Warning?.Print(Ryujinx.Common.Logging.LogClass.ServiceVi,
+                                    $"NX2 MT TABLE flag=0x{flag:X} table=0x{table:X} fnptr=0x{fnptr:X}");
+                            }
+                            catch (Exception ex)
+                            {
+                                Ryujinx.Common.Logging.Logger.Warning?.Print(Ryujinx.Common.Logging.LogClass.ServiceVi,
+                                    $"NX2 MT TABLE read failed: {ex.GetType().Name}");
+                            }
                         }
                     }
                     }
