@@ -16,6 +16,8 @@ namespace Ryujinx.HLE.HOS.Services
         // Diagnostic: per-service-command call counts, printed with the NX2 progress line.
         public static readonly System.Collections.Concurrent.ConcurrentDictionary<string, int> CallCounts = [];
 
+        public static int _traceIpcCount = 0;
+
         private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, byte> UnimplementedLogged = [];
         private static int _tipcTraceCount;
 
@@ -203,6 +205,13 @@ namespace Ryujinx.HLE.HOS.Services
                     context.ResponseData.Write(context.Response.ObjectIds.Count);
                 }
 
+                // TRACEIPC: unified oracle-diff trace (service, cmd, result code).
+                if (System.Threading.Interlocked.Increment(ref _traceIpcCount) <= 200000)
+                {
+                    Logger.Warning?.Print(LogClass.KernelIpc,
+                        $"TRACEIPC {GetType().Name}:{commandId} rc={result}");
+                }
+
                 context.ResponseData.BaseStream.Seek(_isDomain ? 0x10 : 0, SeekOrigin.Begin);
 
                 context.ResponseData.Write(IpcMagic.Sfco);
@@ -267,6 +276,13 @@ namespace Ryujinx.HLE.HOS.Services
                     serviceName = (this is not DummyService dummyService) ? GetType().FullName : dummyService.ServiceName;
 
                     Logger.Debug?.Print(LogClass.KernelIpc, $"Missing service {serviceName}: {commandId} ignored");
+                }
+
+                // TRACEIPC: unified oracle-diff trace (service, cmd, result code).
+                if (System.Threading.Interlocked.Increment(ref _traceIpcCount) <= 200000)
+                {
+                    Logger.Warning?.Print(LogClass.KernelIpc,
+                        $"TRACEIPC {GetType().Name}:{commandId} rc={result}");
                 }
 
                 context.ResponseData.BaseStream.Seek(0, SeekOrigin.Begin);

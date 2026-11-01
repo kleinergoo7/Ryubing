@@ -12,6 +12,10 @@ namespace Ryujinx.HLE.HOS.Services.Am.AppletAE.AllSystemAppletProxiesService.Sys
         [CommandTipc(4)]
         public ResultCode Boot(ServiceCtx context)
         {
+            // Eglantine Stub: ResponseBuilder rb{ctx, 2}; rb.Push(ResultSuccess);
+            // pushes result + one extra zero word. The game reads this extra word.
+            context.ResponseData.BaseStream.Seek(4, System.IO.SeekOrigin.Begin);
+            context.ResponseData.Write(0u);
             return ResultCode.Success;
         }
 

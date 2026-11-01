@@ -26,7 +26,10 @@ namespace Ryujinx.HLE.HOS.Services.Apm
         // GetPerformanceMode() -> nn::apm::PerformanceMode
         public ResultCode GetPerformanceMode(ServiceCtx context)
         {
-            context.ResponseData.Write((uint)GetPerformanceMode());
+            var pm = GetPerformanceMode();
+            context.ResponseData.Write((uint)pm);
+
+            Ryujinx.Common.Logging.Logger.Warning?.Print(Ryujinx.Common.Logging.LogClass.ServiceApm, $"STUBAUDIT GetPerformanceMode -> {pm}");
 
             return ResultCode.Success;
         }

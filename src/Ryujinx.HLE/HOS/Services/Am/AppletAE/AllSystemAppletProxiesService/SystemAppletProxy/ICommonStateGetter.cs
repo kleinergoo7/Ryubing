@@ -95,6 +95,8 @@ namespace Ryujinx.HLE.HOS.Services.Am.AppletAE.AllSystemAppletProxiesService.Sys
 
             context.ResponseData.Write((byte)mode);
 
+            Logger.Warning?.Print(LogClass.ServiceAm, $"STUBAUDIT GetOperationMode -> {mode}");
+
             return ResultCode.Success;
         }
 
@@ -111,7 +113,7 @@ namespace Ryujinx.HLE.HOS.Services.Am.AppletAE.AllSystemAppletProxiesService.Sys
         {
             context.ResponseData.Write((byte)0); //Unknown value.
 
-            Logger.Stub?.PrintStub(LogClass.ServiceAm);
+            Logger.Warning?.Print(LogClass.ServiceAm, "STUBAUDIT GetBootMode -> 0 (stubbed)");
 
             return ResultCode.Success;
         }
@@ -121,6 +123,8 @@ namespace Ryujinx.HLE.HOS.Services.Am.AppletAE.AllSystemAppletProxiesService.Sys
         public ResultCode GetCurrentFocusState(ServiceCtx context)
         {
             context.ResponseData.Write((byte)context.Device.System.AppletState.FocusState);
+
+            Logger.Warning?.Print(LogClass.ServiceAm, $"STUBAUDIT GetCurrentFocusState -> {context.Device.System.AppletState.FocusState}");
 
             return ResultCode.Success;
         }

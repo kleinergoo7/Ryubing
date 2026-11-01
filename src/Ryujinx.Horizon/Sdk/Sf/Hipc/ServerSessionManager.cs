@@ -346,6 +346,15 @@ namespace Ryujinx.Horizon.Sdk.Sf.Hipc
 
             result = Api.Reply(session.SessionHandle, outMessage);
 
+            uint _cmdId = 0;
+            if (inMessage.Length >= 4)
+            {
+                _cmdId = System.Buffers.Binary.BinaryPrimitives.ReadUInt32LittleEndian(inMessage) & 0xFFFF;
+            }
+
+            Ryujinx.Common.Logging.Logger.Warning?.Print(Ryujinx.Common.Logging.LogClass.KernelIpc,
+                $"TRACEIPC {objectHolder.ServiceObject.GetType().Name}:{_cmdId} rc={result}");
+
             ref HandlesToClose handlesToClose = ref dispatchCtx.HandlesToClose;
 
             for (int i = 0; i < handlesToClose.Count; i++)

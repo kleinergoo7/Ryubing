@@ -23,6 +23,10 @@ namespace Ryujinx.HLE.HOS.SystemState
 
             AppletResourceUserIds = new IdDictionary();
             IndirectLayerHandles = new IdDictionary();
+
+            // Default to InFocus so nn::applet reports a focused state; 0 is neither
+            // InFocus (1) nor OutOfFocus (2) and makes the game skip init paths.
+            FocusState = FocusState.InFocus;
         }
 
         public void SetFocus(bool isFocused)

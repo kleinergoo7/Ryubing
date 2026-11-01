@@ -27,6 +27,9 @@ namespace Ryujinx.HLE.HOS.Kernel.Threading
             {
                 _signaled = true;
 
+                Ryujinx.Common.Logging.Logger.Warning?.Print(Ryujinx.Common.Logging.LogClass.KernelSvc,
+                    $"TRACEEVENT signal readable hash={System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(this)} thread={KernelStatic.GetCurrentThread()?.ThreadUid ?? 0}");
+
                 base.Signal();
             }
 
