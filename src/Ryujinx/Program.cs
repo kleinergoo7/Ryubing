@@ -21,6 +21,7 @@ using Ryujinx.Common.Utilities;
 using Ryujinx.Graphics.RenderDocApi;
 using Ryujinx.Graphics.Vulkan.MoltenVK;
 using Ryujinx.Headless;
+using Ryujinx.HLE;
 using Ryujinx.SDL3.Common;
 using System;
 using System.Collections.Generic;
@@ -279,14 +280,9 @@ namespace Ryujinx.Ava
             // Enable OGL multithreading on the driver, and some other flags.
             DriverUtilities.InitDriverConfig(ConfigurationState.Instance.Graphics.BackendThreading == BackendThreading.Off);
 
-            // Check if keys exists.
-            if (!File.Exists(Path.Combine(AppDataManager.KeysDirPath, "prod.keys")))
-            {
-                if (!(AppDataManager.Mode == AppDataManager.LaunchMode.UserProfile && File.Exists(Path.Combine(AppDataManager.KeysDirPathUser, "prod.keys"))))
-                {
-                    MainWindow.ShowKeyErrorOnLoad = true;
-                }
-            }
+            // Unpacked titles need no keys; packed content still reports UserError.NoKeys
+            // at its actual decryption point (MissingKeyException), so no startup nag.
+            MainWindow.ShowKeyErrorOnLoad = false;
 
             if (CommandLineState.LaunchPathArg != null)
             {
@@ -408,6 +404,38 @@ namespace Ryujinx.Ava
                 {
                     ConfigurationState.Instance.System.MemoryManagerMode.Value = result;
                 }
+
+            // Check if dramSize was overridden (name or numeric value, e.g. 3 = 12GiB).
+            if (CommandLineState.OverrideDramSize is not null)
+            {
+                MemoryConfiguration dramResult = ConfigurationState.Instance.System.DramSize.Value;
+
+                if (Enum.TryParse(CommandLineState.OverrideDramSize, true, out MemoryConfiguration dramByName))
+                {
+                    dramResult = dramByName;
+                }
+                else if (int.TryParse(CommandLineState.OverrideDramSize, out int dramNumber) &&
+                         Enum.IsDefined(typeof(MemoryConfiguration), dramNumber))
+                {
+                    dramResult = (MemoryConfiguration)dramNumber;
+                }
+
+                ConfigurationState.Instance.System.DramSize.Value = dramResult;
+            }
+
+            // Check if the emulated CPU core count was overridden.
+            if (CommandLineState.OverrideCpuCores is not null &&
+                int.TryParse(CommandLineState.OverrideCpuCores, out int cpuCores) &&
+                cpuCores > 0)
+            {
+                Switch.CpuCoresOverride = cpuCores;
+            }
+
+            // Check if ignoreMissingServices was overridden.
+            if (CommandLineState.OverrideIgnoreMissingServices is not null)
+            {
+                ConfigurationState.Instance.System.IgnoreMissingServices.Value = CommandLineState.OverrideIgnoreMissingServices.Value;
+            }
 
             // Check if PPTC was overridden.
             if (CommandLineState.OverridePPTC is not null)

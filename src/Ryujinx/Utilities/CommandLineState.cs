@@ -15,6 +15,9 @@ namespace Ryujinx.Ava.Utilities
         public static string OverrideBackendThreadingAfterReboot { get; private set; }
         public static string OverridePPTC { get; private set; }
         public static string OverrideMemoryManagerMode { get; private set; }
+        public static string OverrideDramSize { get; private set; }
+        public static bool? OverrideIgnoreMissingServices { get; private set; }
+        public static string OverrideCpuCores { get; private set; }
         public static string OverrideSystemRegion { get; private set; }
         public static string OverrideSystemLanguage { get; private set; }
         public static string OverrideHideCursor { get; private set; }
@@ -163,6 +166,16 @@ namespace Ryujinx.Ava.Utilities
 
                         OverrideMemoryManagerMode = args[++i];
                         break;
+                    case "--dram-size":
+                        if (i + 1 >= args.Length)
+                        {
+                            Logger.Error?.Print(LogClass.Application, $"Invalid option '{arg}'");
+
+                            continue;
+                        }
+
+                        OverrideDramSize = args[++i];
+                        break;
                     case "--system-region":
                         if (i + 1 >= args.Length)
                         {
@@ -189,6 +202,19 @@ namespace Ryujinx.Ava.Utilities
                         break;
                     case "--docked-mode":
                         OverrideDockedMode = true;
+                        break;
+                    case "--ignore-missing-services":
+                        OverrideIgnoreMissingServices = true;
+                        break;
+                    case "--cpu-cores":
+                        if (i + 1 >= args.Length)
+                        {
+                            Logger.Error?.Print(LogClass.Application, $"Invalid option '{arg}'");
+
+                            continue;
+                        }
+
+                        OverrideCpuCores = args[++i];
                         break;
                     case "--handheld-mode":
                         OverrideDockedMode = false;

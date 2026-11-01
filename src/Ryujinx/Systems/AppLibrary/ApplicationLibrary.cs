@@ -353,6 +353,28 @@ namespace Ryujinx.Ava.Systems.AppLibrary
         public bool TryGetApplicationsFromFile(string applicationPath, out List<ApplicationData> applications)
         {
             applications = [];
+
+            // Unpacked title folder (same shape LoadUnpackedGameFromFolder accepts):
+            // validate the executables exist, Id resolution happens at load.
+            if (Directory.Exists(applicationPath))
+            {
+                if (File.Exists(Path.Combine(applicationPath, "main")) &&
+                    File.Exists(Path.Combine(applicationPath, "main.npdm")))
+                {
+                    applications.Add(new ApplicationData
+                    {
+                        Name = Path.GetFileNameWithoutExtension(applicationPath.TrimEnd(Path.DirectorySeparatorChar)),
+                        Path = applicationPath,
+                    });
+
+                    return true;
+                }
+
+                Logger.Warning?.Print(LogClass.Application, $"No unpacked application found in folder: '{applicationPath}'");
+
+                return false;
+            }
+
             long fileSize;
 
             try
@@ -491,6 +513,24 @@ namespace Ryujinx.Ava.Systems.AppLibrary
                             };
 
                             applications.Add(application);
+
+                            break;
+                        }
+                    // Bare "main" picked from an unpacked ExeFS folder: same shape as
+                    // LoadUnpackedGameFromFolder, Id resolution happens at load.
+                    case "":
+                        {
+                            if (!string.Equals(Path.GetFileName(applicationPath), "main", StringComparison.OrdinalIgnoreCase) ||
+                                !File.Exists(Path.Combine(Path.GetDirectoryName(applicationPath) ?? string.Empty, "main.npdm")))
+                            {
+                                return false;
+                            }
+
+                            applications.Add(new ApplicationData
+                            {
+                                Name = Path.GetFileNameWithoutExtension(Path.GetDirectoryName(applicationPath.TrimEnd(Path.DirectorySeparatorChar))),
+                                Path = Path.GetDirectoryName(applicationPath),
+                            });
 
                             break;
                         }

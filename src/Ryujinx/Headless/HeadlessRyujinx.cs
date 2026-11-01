@@ -414,18 +414,20 @@ namespace Ryujinx.Headless
 
             if (Directory.Exists(path))
             {
-                string[] romFsFiles = Directory.GetFiles(path, "*.istorage");
+                string exeFsPath = path;
+                string romFsDirectory = Path.Combine(Path.GetDirectoryName(path) ?? path, "romfs");
 
-                if (romFsFiles.Length == 0)
+                // Loose Switch 2 dumps use <root>/exefs and <root>/romfs.
+                if (Directory.Exists(Path.Combine(path, "exefs")))
                 {
-                    romFsFiles = Directory.GetFiles(path, "*.romfs");
+                    exeFsPath = Path.Combine(path, "exefs");
                 }
 
-                if (romFsFiles.Length > 0)
+                if (Directory.Exists(romFsDirectory))
                 {
-                    Logger.Info?.Print(LogClass.Application, "Loading as cart with RomFS.");
+                    Logger.Info?.Print(LogClass.Application, "Loading as cart with directory RomFS.");
 
-                    if (!_emulationContext.LoadCart(path, romFsFiles[0]))
+                    if (!_emulationContext.LoadCart(exeFsPath, romFsDirectory))
                     {
                         _emulationContext.Dispose();
 
@@ -434,13 +436,34 @@ namespace Ryujinx.Headless
                 }
                 else
                 {
-                    Logger.Info?.Print(LogClass.Application, "Loading as cart WITHOUT RomFS.");
+                    string[] romFsFiles = Directory.GetFiles(path, "*.istorage");
 
-                    if (!_emulationContext.LoadCart(path))
+                    if (romFsFiles.Length == 0)
                     {
-                        _emulationContext.Dispose();
+                        romFsFiles = Directory.GetFiles(path, "*.romfs");
+                    }
 
-                        return false;
+                    if (romFsFiles.Length > 0)
+                    {
+                        Logger.Info?.Print(LogClass.Application, "Loading as cart with RomFS.");
+
+                        if (!_emulationContext.LoadCart(path, romFsFiles[0]))
+                        {
+                            _emulationContext.Dispose();
+
+                            return false;
+                        }
+                    }
+                    else
+                    {
+                        Logger.Info?.Print(LogClass.Application, "Loading as cart WITHOUT RomFS.");
+
+                        if (!_emulationContext.LoadCart(path))
+                        {
+                            _emulationContext.Dispose();
+
+                            return false;
+                        }
                     }
                 }
             }

@@ -113,6 +113,7 @@ namespace Ryujinx.Ava.Systems
         private bool _isStopped;
         private bool _isActive;
         private bool _renderingStarted;
+        private int _dbgPresented;
 
         private readonly ManualResetEvent _gpuDoneEvent;
 
@@ -803,20 +804,33 @@ namespace Ryujinx.Ava.Systems
             }
             else if (Directory.Exists(ApplicationPath))
             {
-                string[] romFsFiles = Directory.GetFiles(ApplicationPath, "*.istorage");
+                string exeFsPath = ApplicationPath;
+                string romFsDirectory = Path.Combine(Path.GetDirectoryName(ApplicationPath) ?? ApplicationPath, "romfs");
+
+                // Loose Switch 2 dumps use <root>/exefs and <root>/romfs.
+                if (Directory.Exists(Path.Combine(ApplicationPath, "exefs")))
+                {
+                    exeFsPath = Path.Combine(ApplicationPath, "exefs");
+                }
+
+                string[] romFsFiles = Directory.GetFiles(exeFsPath, "*.istorage");
 
                 if (romFsFiles.Length == 0)
                 {
-                    romFsFiles = Directory.GetFiles(ApplicationPath, "*.romfs");
+                    romFsFiles = Directory.GetFiles(exeFsPath, "*.romfs");
                 }
 
-                Logger.Notice.Print(LogClass.Application, $"Loading unpacked content archive from '{ApplicationPath}'.");
+                Logger.Notice.Print(LogClass.Application, $"Loading unpacked content archive from '{exeFsPath}'.");
 
-                if (romFsFiles.Length > 0)
+                string romFsPath = romFsFiles.Length > 0
+                    ? romFsFiles[0]
+                    : Directory.Exists(romFsDirectory) ? romFsDirectory : null;
+
+                if (romFsPath != null)
                 {
                     Logger.Info?.Print(LogClass.Application, "Loading as cart with RomFS.");
 
-                    if (!Device.LoadCart(ApplicationPath, romFsFiles[0]))
+                    if (!Device.LoadCart(exeFsPath, romFsPath))
                     {
                         await ContentDialogHelper.CreateErrorDialog(LocaleManager.Instance.UpdateAndGetDynamicValue(LocaleKeys.Error_NoUnpackedApplicationFoundInFolder));
                         Device.Dispose();
@@ -828,7 +842,7 @@ namespace Ryujinx.Ava.Systems
                 else
                 {
                     Logger.Info?.Print(LogClass.Application, "Loading as cart WITHOUT RomFS.");
-                    if (!Device.LoadCart(ApplicationPath))
+                    if (!Device.LoadCart(exeFsPath))
                     {
                         await ContentDialogHelper.CreateErrorDialog(LocaleManager.Instance.UpdateAndGetDynamicValue(LocaleKeys.Error_NoUnpackedApplicationFoundInFolder));
                         Device.Dispose();
@@ -1122,6 +1136,8 @@ namespace Ryujinx.Ava.Systems
 
             _renderer.Window.SetSize((int)(Width * _topLevel.RenderScaling), (int)(Height * _topLevel.RenderScaling));
 
+            Ryujinx.Common.Logging.Logger.Warning?.Print(Ryujinx.Common.Logging.LogClass.Gpu, $"NX2 renderer: run loop started (active={_isActive})");
+
             _chrono.Start();
 
             Device.Gpu.Renderer.RunLoop(() =>
@@ -1151,8 +1167,14 @@ namespace Ryujinx.Ava.Systems
                             if (!_renderingStarted)
                             {
                                 _renderingStarted = true;
+                                Ryujinx.Common.Logging.Logger.Warning?.Print(Ryujinx.Common.Logging.LogClass.Gpu, "NX2 renderer: first frame consumed, switching to renderer");
                                 _viewModel.SwitchToRenderer(false);
                                 InitStatus();
+                            }
+
+                            if (++_dbgPresented <= 3)
+                            {
+                                Ryujinx.Common.Logging.Logger.Warning?.Print(Ryujinx.Common.Logging.LogClass.Gpu, $"NX2 renderer: presenting frame #{_dbgPresented}");
                             }
 
                             Device.PresentFrame(() =>
