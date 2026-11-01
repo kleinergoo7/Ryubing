@@ -19,6 +19,9 @@ namespace Ryujinx.HLE.HOS.Services.Am.AppletAE.AllSystemAppletProxiesService.Sys
 
         private void TrackTickEvent(KEvent evt)
         {
+            int h = System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(evt.ReadableEvent);
+            Ryujinx.Common.Logging.Logger.Warning?.Print(Ryujinx.Common.Logging.LogClass.ServiceVi,
+                $"NX2 vi2 track tick event readableHash={h}");
             lock (_tickEvents)
             {
                 _tickEvents.Add(evt);
