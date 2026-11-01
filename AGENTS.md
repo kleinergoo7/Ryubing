@@ -60,7 +60,9 @@ Silence is worse than a crash: it produces a wrong result that looks valid.
 ## 4. Tests
 
 - Every function with a branch, a loop, a parser, or arithmetic on untrusted guest data
-  gets a test, including one test per named error (the failure side).
+  gets a test, including one test per named error (the failure side). Pure functions
+  (layout math, swizzle tables, parsers) always qualify; guest-coupled paths that need
+  a running title or a GPU are exempt with a written reason instead.
 - Unit tests live beside the code in the idiomatic place (`src/Ryujinx.Tests`);
   integration tests use isolated temp dirs, never shared state. No test needs a game dump
   or a GPU; a test that does is skipped by default with a clear message.
@@ -101,8 +103,9 @@ Guest memory, IPC payloads, and file headers are untrusted input.
 
 ## 8. Git and repository hygiene
 
-- License identifier (SPDX header) on every source file, plus attribution where code is
+- License identifier (SPDX header) on every new source file, plus attribution where code is
   ported from another project (for example Eglantine behavior ports name the source).
+  Existing files without headers are left alone (no unrelated churn).
 - Small commits, one reason each. Build fixes and behavior fixes land separately.
 - Never force-push, never rewrite history without a backup branch.
 - A workaround is labelled `WORKAROUND`, states why, and logs every trigger.
