@@ -45,7 +45,7 @@ namespace Ryujinx.HLE.HOS.Services.Am.AppletAE.AllSystemAppletProxiesService.Sys
                         Ryujinx.HLE.HOS.Kernel.KernelContext kc = Ryujinx.HLE.HOS.Kernel.KernelStatic.GlobalContext;
 
                         Ryujinx.Common.Logging.Logger.Warning?.Print(Ryujinx.Common.Logging.LogClass.ServiceVi,
-                            $"NX2 tick: dumpKernel={(kc != null)}, staticHash={System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(_dumpKernel)}, mainThreadWaitingSync check");
+                            $"NX2 tick: kc={(kc != null)}, processes={(kc != null ? kc.Processes.Count : 0)}, mainThreadWaitingSync check");
 
                         if (kc != null)
                         {
