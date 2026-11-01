@@ -13,7 +13,7 @@ namespace Ryujinx.HLE.HOS.Kernel.Threading
         public KReadableEvent(KernelContext context) : base(context)
         {
             Ryujinx.Common.Logging.Logger.Info?.Print(Ryujinx.Common.Logging.LogClass.KernelSvc,
-                $\"KReadableEvent created id={EventId} hash={System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(this)}\");
+                $"KReadableEvent created id={EventId} hash={System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(this)}");
         }
 
         public override void Signal()

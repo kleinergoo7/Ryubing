@@ -122,9 +122,9 @@ namespace Ryujinx.HLE.HOS.Kernel.Threading
 
             bool mainThreadWaiting = false;
 
-            foreach (LinkedListNode<KThread> n in syncObj.WaitingThreads)
+            foreach (KThread wt in syncObj.WaitingThreads)
             {
-                if (n.Value.ThreadUid == 28)
+                if (wt.ThreadUid == 28)
                 {
                     mainThreadWaiting = true;
                 }
