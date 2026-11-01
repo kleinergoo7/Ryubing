@@ -50,10 +50,10 @@ namespace Ryujinx.HLE.HOS.Services.Am.AppletAE.AllSystemAppletProxiesService.Sys
                     if (MainThreadRef != null)
                     {
                         ulong pc = MainThreadRef.Context.Pc;
-                        if (pc == 0x876DBF4 || pc == 0x897FA74 || pc == 0xC8CBE9C)
+                        if (pc != 0xC38437C && pc != 0xC3840E4 && pc != 0xC38416C)
                         {
                             Ryujinx.Common.Logging.Logger.Warning?.Print(Ryujinx.Common.Logging.LogClass.ServiceVi,
-                                $"NX2 MT RENDER pc=0x{pc:X} lr=0x{MainThreadRef.Context.GetX(30):X} x0=0x{MainThreadRef.Context.GetX(0):X} x1=0x{MainThreadRef.Context.GetX(1):X} x2=0x{MainThreadRef.Context.GetX(2):X} x3=0x{MainThreadRef.Context.GetX(3):X}");
+                                $"NX2 MT ACTIVE pc=0x{pc:X} lr=0x{MainThreadRef.Context.GetX(30):X} x0=0x{MainThreadRef.Context.GetX(0):X} x1=0x{MainThreadRef.Context.GetX(1):X} x2=0x{MainThreadRef.Context.GetX(2):X} x3=0x{MainThreadRef.Context.GetX(3):X} x4=0x{MainThreadRef.Context.GetX(4):X} x5=0x{MainThreadRef.Context.GetX(5):X}");
                         }
                     }
                     }
