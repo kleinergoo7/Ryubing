@@ -89,8 +89,9 @@ namespace Ryujinx.Ava.Utilities
                 string baseApplicationExtension = Path.GetExtension(baseApplicationPath).ToLowerInvariant();
 
                 // NOTE: We don't force homebrew developers to install a system firmware.
-                // Unpacked Switch 2 titles also boot without firmware (verified headless);
-                // missing system archives get HLE fallbacks at runtime instead.
+                // WORKAROUND: unpacked Switch 2 titles also boot without firmware (verified
+                // headless); missing system archives get HLE fallbacks at runtime instead.
+                // Remove once firmware-gated features are required at load time.
                 if (baseApplicationExtension is ".nro" or ".nso" || Directory.Exists(baseApplicationPath))
                 {
                     error = UserError.Success;

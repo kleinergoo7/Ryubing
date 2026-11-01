@@ -2081,6 +2081,9 @@ namespace Ryujinx.HLE.HOS.Kernel.SupervisorCall
                                 value = process.MemoryManager.AliasRegionExtraSize;
                                 break;
 
+                            // WORKAROUND: Switch 2 address-space layout is guessed from the alias
+                            // region (upper half) until the real kernel layout is known. Logged on
+                            // every trigger below.
                             case InfoType.Nx2RegionAddress:
                             case InfoType.Nx2RegionSize:
                                 {
@@ -2093,12 +2096,16 @@ namespace Ryujinx.HLE.HOS.Kernel.SupervisorCall
                                 }
                                 break;
 
+                            // WORKAROUND: remote-memory accounting does not exist yet; 0 keeps the
+                            // guest's budget checks passing. Logged on every trigger below.
                             case InfoType.Nx2RemoteMemorySize:
                             case InfoType.Nx2RemoteMemoryUsed:
                                 value = 0;
                                 Logger.Warning?.Print(LogClass.KernelSvc, $"(STUBBED) Switch 2 InfoType {(int)id} = 0");
                                 break;
 
+                            // WORKAROUND: VAMM granule size is assumed to be one page, like Switch 1.
+                            // Logged on every trigger below.
                             case InfoType.Nx2VammSize:
                                 value = KPageTableBase.PageSize;
                                 Logger.Warning?.Print(LogClass.KernelSvc, $"(STUBBED) Switch 2 InfoType 33 = 0x{value:X}");
@@ -2496,6 +2503,9 @@ namespace Ryujinx.HLE.HOS.Kernel.SupervisorCall
         [Svc(0x80)]
         public Result SetGpuMemoryAttribute(ulong address, ulong size, ulong mask, ulong attribute)
         {
+            // WORKAROUND: GPU memory attributes are accepted without effect; the guest only
+            // needs the call to succeed during boot. No per-trigger log (called thousands of
+            // times per minute); revisit if GPU coherence issues appear.
             return Result.Success;
         }
 

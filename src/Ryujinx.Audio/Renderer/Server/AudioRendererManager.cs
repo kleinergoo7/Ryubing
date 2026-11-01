@@ -1,5 +1,5 @@
-using Ryujinx.Audio.Integration;
 using Ryujinx.Audio.Backends.Dummy;
+using Ryujinx.Audio.Integration;
 using Ryujinx.Audio.Renderer.Dsp;
 using Ryujinx.Audio.Renderer.Parameter;
 using Ryujinx.Common.Logging;
@@ -189,8 +189,9 @@ namespace Ryujinx.Audio.Renderer.Server
             }
             catch (Exception ex)
             {
-                // A failing host audio backend (e.g. no usable output device) must not
-                // take the emulator down; run silenced instead.
+                // WORKAROUND: a failing host audio backend (e.g. no usable output device) must
+                // not take the emulator down; run silenced instead. Logged on every trigger
+                // below; drop once backend startup reports errors without throwing.
                 Logger.Warning?.Print(LogClass.AudioRenderer, $"Audio backend failed to start ({ex.Message}), falling back to dummy output.");
 
                 _deviceDriver.Dispose();

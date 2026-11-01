@@ -350,9 +350,9 @@ namespace Ryujinx.HLE.HOS.Services.Nv.NvDrvServices.NvHostChannel
                     0xC797 or 0xC697 or 0xC597 => 0xB197, // 3D
                     0xC7C0 or 0xC6C0 or 0xC5C0 => 0xB1C0, // compute
                     0xC7B5 or 0xC6B5 or 0xC5B5 => 0xB0B5, // DMA copy
-                    0xC56F or 0xC76F          => 0xB06F, // channel GPFIFO
-                    0                         => 0xB197, // first free engine slot
-                    _                         => arguments.ClassNumber,
+                    0xC56F or 0xC76F => 0xB06F, // channel GPFIFO
+                    0 => 0xB197, // first free engine slot
+                    _ => arguments.ClassNumber,
                 };
 
                 if (mapped != arguments.ClassNumber)
@@ -455,8 +455,9 @@ namespace Ryujinx.HLE.HOS.Services.Nv.NvDrvServices.NvHostChannel
         {
             bool nx2 = NvHostCtrlGpuDeviceFile.Nx2Driver;
 
-            // Switch 2 nvhost allows waiting on a fence and incrementing in one submission;
-            // older (Switch 1) nvhost rejects that combination.
+            // WORKAROUND: Switch 2 nvhost allows waiting on a fence and incrementing in one
+            // submission; older (Switch 1) nvhost rejects that combination. Accepted on faith
+            // from observed guest traffic; re-check against hardware behavior if submits misbehave.
             if (!nx2 &&
                 header.Flags.HasFlag(SubmitGpfifoFlags.FenceWait) &&
                 header.Flags.HasFlag(SubmitGpfifoFlags.IncrementWithValue))

@@ -165,9 +165,10 @@ namespace Ryujinx.Horizon.Sdk.Sf.Hipc
 
             if (GetCmifCommandType(message) == CommandType.Close)
             {
-                // Some Switch 2 clients use the session's reply buffer as the close
-                // message; closing here would make their next request fail. Keep the
-                // session and acknowledge.
+                // WORKAROUND: some Switch 2 clients use the session's reply buffer as the close
+                // message; closing here would make their next request fail. Keep the session and
+                // acknowledge instead. Logged on every trigger via the close-msg warning above;
+                // revisit once the affected client is identified (sessions leak until then).
                 HipcMessageData stub = HipcMessage.WriteResponse(message, 0, 0x20 / sizeof(uint), 0, 0);
                 Span<CmifOutHeader> stubHeader = MemoryMarshal.Cast<byte, CmifOutHeader>(
                     MemoryMarshal.Cast<uint, byte>(stub.DataWords))[..1];

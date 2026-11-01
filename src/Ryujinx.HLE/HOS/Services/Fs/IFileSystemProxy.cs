@@ -899,8 +899,10 @@ namespace Ryujinx.HLE.HOS.Services.Fs
             return ResultCode.Success;
         }
 
-        // Unpacked titles without a RomFS file have no registered storage;
-        // hand out an empty one instead of throwing (reads come back empty).
+        // Unpacked titles without a RomFS file have no registered storage.
+        // WORKAROUND: hand out an empty one instead of throwing, so boot continues; reads
+        // come back empty. Logged on every trigger below; replace with a proper
+        // NotFound result once callers handle it.
         private Stream GetRomFsOrEmpty(ServiceCtx context)
         {
             if (!context.Device.FileSystem.TryGetRomFs(_pid, out Stream romFs))

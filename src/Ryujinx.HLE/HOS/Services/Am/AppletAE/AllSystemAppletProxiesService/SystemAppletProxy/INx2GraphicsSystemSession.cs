@@ -1,3 +1,4 @@
+// Behavior ported from Eglantine (Eden fork) Switch 2 support; see NX2_NOTES.md there.
 using Ryujinx.HLE.HOS.Services.Nv;
 using System;
 
