@@ -38,44 +38,12 @@ namespace Ryujinx.HLE.HOS.Services.Am.AppletAE.AllSystemAppletProxiesService.Sys
                         }
                     }
 
-                    // Targeted: find the KReadableEvent MainThread is blocked on (infinite
-                    // wait) and signal only that one, so unrelated events stay unsignalled.
-                    try
+                    // Signal the event MainThread is blocked on (captured in WaitSynchronization).
+                    Ryujinx.HLE.HOS.Kernel.Threading.KReadableEvent be = Ryujinx.HLE.HOS.Services.Am.AppletAE.AllSystemAppletProxiesService.SystemAppletProxy.INx2Vi2Session.BlockedEvent;
+
+                    if (be != null)
                     {
-                        Ryujinx.HLE.HOS.Kernel.KernelContext kc = Ryujinx.HLE.HOS.Kernel.KernelStatic.GlobalContext;
-
-                        Ryujinx.Common.Logging.Logger.Warning?.Print(Ryujinx.Common.Logging.LogClass.ServiceVi,
-                            $"NX2 tick: kc={(kc != null)}, processes={(kc != null ? kc.Processes.Count : 0)}, mainThreadWaitingSync check");
-
-                        if (kc != null)
-                        {
-                            foreach (System.Collections.Generic.KeyValuePair<ulong, Ryujinx.HLE.HOS.Kernel.Process.KProcess> pe in kc.Processes)
-                            {
-                                if (pe.Key != 109)
-                                {
-                                    continue;
-                                }
-
-                                foreach (Ryujinx.HLE.HOS.Kernel.Threading.KThread th in pe.Value.DebugThreads)
-                                {
-                                    if (th.ThreadUid != 28 || !th.WaitingSync)
-                                    {
-                                        continue;
-                                    }
-
-                                    foreach (Ryujinx.HLE.HOS.Kernel.Common.KSynchronizationObject so in th.WaitSyncObjects)
-                                    {
-                                        if (so is Ryujinx.HLE.HOS.Kernel.Threading.KReadableEvent kre)
-                                        {
-                                            kre.Signal();
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    catch
-                    {
+                        be.Signal();
                     }
 
                     Ryujinx.HLE.HOS.Services.Nv.NvDrvServices.NvHostChannel.NvHostGpuDeviceFile.SignalAllNx2Events();
@@ -536,6 +504,7 @@ namespace Ryujinx.HLE.HOS.Services.Am.AppletAE.AllSystemAppletProxiesService.Sys
         private static bool _mainStackDumped;
         private static int _dumpKernelLogs;
         private static int _gcLogs;
+        public static Ryujinx.HLE.HOS.Kernel.Threading.KReadableEvent BlockedEvent;
         private static uint _previousFenceValue;
         private static byte[] _sourceBuffer;
         private static byte[] _linearBuffer;

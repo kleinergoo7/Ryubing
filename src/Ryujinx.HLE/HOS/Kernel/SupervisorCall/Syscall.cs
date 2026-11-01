@@ -2950,6 +2950,8 @@ namespace Ryujinx.HLE.HOS.Kernel.SupervisorCall
 
                 if (currentThread.ThreadUid == 28 && obj is Ryujinx.HLE.HOS.Kernel.Threading.KReadableEvent kre && timeout < 0)
                 {
+                    Ryujinx.HLE.HOS.Services.Am.AppletAE.AllSystemAppletProxiesService.SystemAppletProxy.INx2Vi2Session.BlockedEvent = kre;
+
                     Ryujinx.Common.Logging.Logger.Warning?.Print(Ryujinx.Common.Logging.LogClass.KernelSvc,
                         $"NX2 MainThread waiting on KReadableEvent id={kre.EventId} hash={hash} handle=0x{handles[0]:X8} pc=0x{currentThread.Context.Pc:X}");
                 }
