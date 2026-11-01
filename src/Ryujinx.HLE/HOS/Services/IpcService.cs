@@ -17,6 +17,7 @@ namespace Ryujinx.HLE.HOS.Services
         public static readonly System.Collections.Concurrent.ConcurrentDictionary<string, int> CallCounts = [];
 
         private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, byte> UnimplementedLogged = [];
+        private static int _tipcTraceCount;
 
         public IReadOnlyDictionary<int, MethodInfo> CmifCommands { get; }
         public IReadOnlyDictionary<int, MethodInfo> TipcCommands { get; }
@@ -220,6 +221,28 @@ namespace Ryujinx.HLE.HOS.Services
             int commandId = (int)context.Request.Type - 0x10;
 
             CallCounts.AddOrUpdate($"{GetType().Name}:{commandId}", 1, (_, v) => v + 1);
+
+            // Diagnostic: ordered TIPC trace (service::cmd + words) to diff against the
+            // oracle's IPC trace. Bounded; only nx2 services matter for the boot comparison.
+            if (GetType().Name.StartsWith("INx2") &&
+                System.Threading.Interlocked.Increment(ref _tipcTraceCount) <= 20000)
+            {
+                System.IO.Stream stream = context.RequestData.BaseStream;
+                long saved = stream.Position;
+                stream.Position = 0;
+
+                int length = (int)System.Math.Min(stream.Length, 6 * sizeof(uint));
+                byte[] raw = new byte[length];
+
+                stream.ReadExactly(raw, 0, length);
+                stream.Position = saved;
+
+                string words = string.Join(' ', System.Linq.Enumerable.Select(
+                    System.Runtime.InteropServices.MemoryMarshal.Cast<byte, uint>(raw.AsSpan(0, length & ~3)).ToArray(),
+                    w => w.ToString("X8")));
+
+                Logger.Warning?.Print(LogClass.KernelIpc, $"NX2TIPC {GetType().Name}:{commandId} [{words}]");
+            }
 
             bool serviceExists = TipcCommands.TryGetValue(commandId, out MethodInfo processRequest);
 
