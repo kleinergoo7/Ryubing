@@ -13,6 +13,7 @@ namespace Ryujinx.HLE.HOS.Services.Fs.FileSystemProxy
     class IStorage : DisposableIpcService
     {
         private SharedRef<LibHac.FsSrv.Sf.IStorage> _baseStorage;
+        private static int _readSampleLogs;
 
         public IStorage(ref SharedRef<LibHac.FsSrv.Sf.IStorage> baseStorage)
         {
@@ -47,6 +48,13 @@ namespace Ryujinx.HLE.HOS.Services.Fs.FileSystemProxy
                 try
                 {
                     result = _baseStorage.Get.Read((long)offset, new OutBuffer(region.Memory.Span), (long)size);
+
+                    // Diagnostic: sample the first reads so a broken RomFS shows up as
+                    // failures or all-zero sizes instead of silent loader spinning.
+                    if (System.Threading.Interlocked.Increment(ref _readSampleLogs) <= 12)
+                    {
+                        Logger.Warning?.Print(LogClass.ServiceFs, $"IStorageRead sample off=0x{offset:X} size=0x{size:X} res=0x{result.Value:X}");
+                    }
 
                     if (result.IsFailure())
                     {
