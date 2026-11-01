@@ -2943,11 +2943,18 @@ namespace Ryujinx.HLE.HOS.Kernel.SupervisorCall
 
             KThread currentThread = KernelStatic.GetCurrentThread();
 
-            if (WaitLogEnabled && handles.Length != 0)
+            if (handles.Length != 0)
             {
                 KSynchronizationObject obj = KernelStatic.GetCurrentProcess().HandleTable.GetObject<KSynchronizationObject>(handles[0]);
                 int hash = obj != null ? System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(obj) : 0;
-                string key = $"{currentThread.ThreadUid}:{hash}:0x{currentThread.Context.Pc:X}:{obj?.GetType().Name}";
+
+                if (currentThread.ThreadUid == 28 && obj is Ryujinx.HLE.HOS.Kernel.Threading.KReadableEvent kre && timeout < 0)
+                {
+                    Ryujinx.Common.Logging.Logger.Warning?.Print(Ryujinx.Common.Logging.LogClass.KernelSvc,
+                        $\"NX2 MainThread waiting on KReadableEvent id={kre.EventId} hash={hash} handle=0x{handles[0]:X8} pc=0x{currentThread.Context.Pc:X}\");
+                }
+
+                string key = $\"{currentThread.ThreadUid}:{hash}:0x{currentThread.Context.Pc:X}:{obj?.GetType().Name}\";
 
                 if (WaitSiteLogged.TryAdd(key, 0))
                 {
