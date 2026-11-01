@@ -42,7 +42,7 @@ namespace Ryujinx.HLE.HOS.Services.Am.AppletAE.AllSystemAppletProxiesService.Sys
                     // wait) and signal only that one, so unrelated events stay unsignalled.
                     try
                     {
-                        Ryujinx.HLE.HOS.Kernel.KernelContext kc = _dumpKernel;
+                        Ryujinx.HLE.HOS.Kernel.KernelContext kc = Ryujinx.HLE.HOS.Kernel.KernelStatic.GlobalContext;
 
                         Ryujinx.Common.Logging.Logger.Warning?.Print(Ryujinx.Common.Logging.LogClass.ServiceVi,
                             $"NX2 tick: dumpKernel={(kc != null)}, staticHash={System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(_dumpKernel)}, mainThreadWaitingSync check");
@@ -283,6 +283,7 @@ namespace Ryujinx.HLE.HOS.Services.Am.AppletAE.AllSystemAppletProxiesService.Sys
             System.Threading.Interlocked.Increment(ref Nx2Counters.Presents);
 
             _dumpKernel ??= context.Device.System.KernelContext;
+            Ryujinx.HLE.HOS.Kernel.KernelStatic.GlobalContext ??= context.Device.System.KernelContext;
             if (_dumpKernel != null && System.Threading.Interlocked.Increment(ref _dumpKernelLogs) == 1)
             {
                 Ryujinx.Common.Logging.Logger.Warning?.Print(Ryujinx.Common.Logging.LogClass.ServiceVi,

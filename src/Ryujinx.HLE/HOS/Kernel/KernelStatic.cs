@@ -12,6 +12,8 @@ namespace Ryujinx.HLE.HOS.Kernel
         [ThreadStatic]
         private static KernelContext _context;
 
+        public static KernelContext GlobalContext;
+
         [ThreadStatic]
         private static KThread _currentThread;
 
