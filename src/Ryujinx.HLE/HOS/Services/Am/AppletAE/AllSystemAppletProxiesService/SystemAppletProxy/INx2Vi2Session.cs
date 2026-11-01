@@ -47,10 +47,14 @@ namespace Ryujinx.HLE.HOS.Services.Am.AppletAE.AllSystemAppletProxiesService.Sys
                             $"NX2 tick: signalling BlockedEvent id={be.EventId}");
                         be.Signal();
 
-                    if (MainThreadRef != null && _progressTicks % 60 == 0)
+                    if (MainThreadRef != null)
                     {
-                        Ryujinx.Common.Logging.Logger.Warning?.Print(Ryujinx.Common.Logging.LogClass.ServiceVi,
-                            $"NX2 MT pc=0x{MainThreadRef.Context.Pc:X} lr=0x{MainThreadRef.Context.GetX(30):X} sp=0x{MainThreadRef.Context.GetX(31):X}");
+                        ulong pc = MainThreadRef.Context.Pc;
+                        if (pc == 0x876DBF4 || pc == 0x897FA74 || pc == 0xC8CBE9C)
+                        {
+                            Ryujinx.Common.Logging.Logger.Warning?.Print(Ryujinx.Common.Logging.LogClass.ServiceVi,
+                                $"NX2 MT RENDER pc=0x{pc:X} lr=0x{MainThreadRef.Context.GetX(30):X} x0=0x{MainThreadRef.Context.GetX(0):X} x1=0x{MainThreadRef.Context.GetX(1):X} x2=0x{MainThreadRef.Context.GetX(2):X} x3=0x{MainThreadRef.Context.GetX(3):X}");
+                        }
                     }
                     }
 
