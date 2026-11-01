@@ -45,7 +45,7 @@ namespace Ryujinx.HLE.HOS.Services.Am.AppletAE.AllSystemAppletProxiesService.Sys
                         Ryujinx.HLE.HOS.Kernel.KernelContext kc = _dumpKernel;
 
                         Ryujinx.Common.Logging.Logger.Warning?.Print(Ryujinx.Common.Logging.LogClass.ServiceVi,
-                            $"NX2 tick: dumpKernel={(kc != null)}, mainThreadWaitingSync check");
+                            $"NX2 tick: dumpKernel={(kc != null)}, staticHash={System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(_dumpKernel)}, mainThreadWaitingSync check");
 
                         if (kc != null)
                         {
@@ -286,7 +286,7 @@ namespace Ryujinx.HLE.HOS.Services.Am.AppletAE.AllSystemAppletProxiesService.Sys
             if (_dumpKernel != null && System.Threading.Interlocked.Increment(ref _dumpKernelLogs) == 1)
             {
                 Ryujinx.Common.Logging.Logger.Warning?.Print(Ryujinx.Common.Logging.LogClass.ServiceVi,
-                    $"NX2 _dumpKernel set: {_dumpKernel != null}, processes={_dumpKernel.Processes.Count}");
+                    $"NX2 _dumpKernel set: {_dumpKernel != null}, processes={_dumpKernel.Processes.Count}, hash={System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(_dumpKernel)}");
             }
 
             if (System.Threading.Interlocked.Increment(ref _presentLogs) <= 8)
