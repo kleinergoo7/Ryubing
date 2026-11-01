@@ -1049,6 +1049,16 @@ namespace Ryujinx.Graphics.Gpu.Memory
         /// <returns>True if the region was created</returns>
         public static bool CreateSparse(ulong start, ulong size)
         {
+            return CreateRegion(start, size, false);
+        }
+
+        /// <summary>
+        /// Creates a GPU-only region (nx2:gpu 214). Non-sparse regions are committed
+        /// eagerly (the console backs them with real memory up front); sparse regions
+        /// stay lazy and commit chunks as the GPU writes them.
+        /// </summary>
+        public static bool CreateRegion(ulong start, ulong size, bool eager)
+        {
             if (size == 0 || start + size < start ||
                 (start & MemoryManager.PageMask) != 0 || (size & MemoryManager.PageMask) != 0)
             {
@@ -1080,7 +1090,28 @@ namespace Ryujinx.Graphics.Gpu.Memory
                         $"NX2 sparse region 0x{start:X} (0x{size:X} bytes) exceeds the virtual budget, writes dropped");
                 }
 
-                _sparse[start] = new SparseEntry { Start = start, Size = size };
+                SparseEntry entry = new() { Start = start, Size = size };
+
+                if (eager)
+                {
+                    ulong chunks = (size + SparseChunkSize - 1) / SparseChunkSize;
+
+                    for (ulong i = 0; i < chunks; i++)
+                    {
+                        if (SparseChunkSize > SparseCommitBudget - _sparseCommitted)
+                        {
+                            Logger.Warning?.Print(LogClass.Gpu,
+                                $"NX2 eager region 0x{start:X} hit the {SparseCommitBudget >> 30} GiB commit budget at chunk {i}");
+
+                            break;
+                        }
+
+                        entry.Chunks[i] = new MemoryBlock((long)SparseChunkSize);
+                        _sparseCommitted += SparseChunkSize;
+                    }
+                }
+
+                _sparse[start] = entry;
                 RebuildSparseLocked();
 
                 return true;

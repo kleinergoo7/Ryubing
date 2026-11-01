@@ -279,15 +279,19 @@ namespace Ryujinx.HLE.HOS.Services.Am.AppletAE.AllSystemAppletProxiesService.Sys
 
             ulong start = context.RequestData.ReadUInt64();
             ulong last = context.RequestData.ReadUInt64();
-            context.RequestData.ReadUInt32(); // Flags.
+            uint flags = context.RequestData.ReadUInt32();
 
             context.RequestData.BaseStream.Seek(3 * sizeof(uint), System.IO.SeekOrigin.Current);
             uint slot = context.RequestData.ReadUInt32();
 
-            if (last >= start && Nx2GpuMemory.CreateSparse(start, last - start + 1))
+            // Flag 0x200 marks mostly-empty terrain/pool regions, backed lazily as the GPU
+            // writes them; the rest the console backs with real memory up front.
+            bool eager = (flags & 0x200) == 0;
+
+            if (last >= start && Nx2GpuMemory.CreateRegion(start, last - start + 1, eager))
             {
                 Logger.Debug?.Print(LogClass.KernelIpc,
-                    $"nx2:gpu 214 GPU-only region [0x{start:X}, 0x{last:X}] size=0x{last - start + 1:X}");
+                    $"nx2:gpu 214 GPU-only region [0x{start:X}, 0x{last:X}] size=0x{last - start + 1:X} eager={eager}");
             }
             else
             {
