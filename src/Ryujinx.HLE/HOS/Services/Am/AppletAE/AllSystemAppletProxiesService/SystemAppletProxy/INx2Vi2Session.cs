@@ -46,6 +46,12 @@ namespace Ryujinx.HLE.HOS.Services.Am.AppletAE.AllSystemAppletProxiesService.Sys
                         Ryujinx.Common.Logging.Logger.Warning?.Print(Ryujinx.Common.Logging.LogClass.ServiceVi,
                             $"NX2 tick: signalling BlockedEvent id={be.EventId}");
                         be.Signal();
+
+                    if (MainThreadRef != null && _progressTicks % 60 == 0)
+                    {
+                        Ryujinx.Common.Logging.Logger.Warning?.Print(Ryujinx.Common.Logging.LogClass.ServiceVi,
+                            $"NX2 MT pc=0x{MainThreadRef.Context.Pc:X} lr=0x{MainThreadRef.Context.GetX(30):X} sp=0x{MainThreadRef.Context.GetX(31):X}");
+                    }
                     }
 
                     Ryujinx.HLE.HOS.Services.Nv.NvDrvServices.NvHostChannel.NvHostGpuDeviceFile.SignalAllNx2Events();
@@ -254,9 +260,28 @@ namespace Ryujinx.HLE.HOS.Services.Am.AppletAE.AllSystemAppletProxiesService.Sys
 
             _dumpKernel ??= context.Device.System.KernelContext;
 
+            if (MainThreadRef == null)
+            {
+                foreach (Ryujinx.HLE.HOS.Kernel.Process.KProcess procEntry in context.Device.System.KernelContext.Processes.Values)
+                {
+                    if (procEntry.Pid != 109)
+                    {
+                        continue;
+                    }
+
+                    foreach (Ryujinx.HLE.HOS.Kernel.Threading.KThread thread in procEntry.DebugThreads)
+                    {
+                        if (thread.ThreadUid == 28)
+                        {
+                            MainThreadRef = thread;
+                        }
+                    }
+                }
+            }
+
             // Diagnostic: capture MainThread's LR and stack at Present time to find the
             // render call chain (whether 0xc2063c / vtable dispatch is on the path).
-            if (Nx2Counters.Presents == 2000 && _dumpKernel != null)
+            if (false && Nx2Counters.Presents == 2000 && _dumpKernel != null)
             {
                 foreach (Ryujinx.HLE.HOS.Kernel.Process.KProcess procEntry in _dumpKernel.Processes.Values)
                 {
@@ -273,7 +298,7 @@ namespace Ryujinx.HLE.HOS.Services.Am.AppletAE.AllSystemAppletProxiesService.Sys
                         }
 
                         Ryujinx.Common.Logging.Logger.Warning?.Print(Ryujinx.Common.Logging.LogClass.ServiceVi,
-                            $"NX2 Present@2000 LR=0x{thread.Context.Lr:X} PC=0x{thread.Context.Pc:X} SP=0x{thread.Context.Sp:X}");
+                            $"NX2 Present@2000 LR=0x{thread.Context.GetX(30):X} PC=0x{thread.Context.Pc:X} SP=0x{thread.Context.GetX(31):X}");
 
                         // Read 8 words from SP
                         try
@@ -281,7 +306,7 @@ namespace Ryujinx.HLE.HOS.Services.Am.AppletAE.AllSystemAppletProxiesService.Sys
                             System.Text.StringBuilder sb = new("NX2 Present@2000 stack:");
                             for (int i = 0; i < 8; i++)
                             {
-                                ulong addr = thread.Context.Sp + (ulong)(i * 8);
+                                ulong addr = thread.Context.GetX(31) + (ulong)(i * 8);
                                 Ryujinx.Memory.IVirtualMemoryManager vmm = procEntry.CpuMemory;
                                 ulong val = vmm.Read<ulong>(addr);
                                 sb.Append($" 0x{val:X}");
@@ -576,6 +601,7 @@ namespace Ryujinx.HLE.HOS.Services.Am.AppletAE.AllSystemAppletProxiesService.Sys
         private static int _dumpKernelLogs;
         private static int _gcLogs;
         public static Ryujinx.HLE.HOS.Kernel.Threading.KReadableEvent BlockedEvent;
+        public static Ryujinx.HLE.HOS.Kernel.Threading.KThread MainThreadRef;
         private static uint _previousFenceValue;
         private static byte[] _sourceBuffer;
         private static byte[] _linearBuffer;
