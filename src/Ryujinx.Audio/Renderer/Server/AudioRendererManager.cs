@@ -1,4 +1,5 @@
 using Ryujinx.Audio.Integration;
+using Ryujinx.Audio.Backends.Dummy;
 using Ryujinx.Audio.Renderer.Dsp;
 using Ryujinx.Audio.Renderer.Parameter;
 using Ryujinx.Common.Logging;
@@ -182,7 +183,21 @@ namespace Ryujinx.Audio.Renderer.Server
             _isRunning = true;
 
             // TODO: virtual device mapping (IAudioDevice)
-            Processor.Start(_deviceDriver);
+            try
+            {
+                Processor.Start(_deviceDriver);
+            }
+            catch (Exception ex)
+            {
+                // A failing host audio backend (e.g. no usable output device) must not
+                // take the emulator down; run silenced instead.
+                Logger.Warning?.Print(LogClass.AudioRenderer, $"Audio backend failed to start ({ex.Message}), falling back to dummy output.");
+
+                _deviceDriver.Dispose();
+                _deviceDriver = new DummyHardwareDeviceDriver();
+
+                Processor.Start(_deviceDriver);
+            }
 
             _workerThread = new Thread(SendCommands)
             {
