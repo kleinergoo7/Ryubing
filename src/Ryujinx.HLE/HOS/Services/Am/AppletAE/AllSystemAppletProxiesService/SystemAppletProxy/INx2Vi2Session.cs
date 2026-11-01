@@ -283,6 +283,11 @@ namespace Ryujinx.HLE.HOS.Services.Am.AppletAE.AllSystemAppletProxiesService.Sys
             System.Threading.Interlocked.Increment(ref Nx2Counters.Presents);
 
             _dumpKernel ??= context.Device.System.KernelContext;
+            if (_dumpKernel != null && System.Threading.Interlocked.Increment(ref _dumpKernelLogs) == 1)
+            {
+                Ryujinx.Common.Logging.Logger.Warning?.Print(Ryujinx.Common.Logging.LogClass.ServiceVi,
+                    $"NX2 _dumpKernel set: {_dumpKernel != null}, processes={_dumpKernel.Processes.Count}");
+            }
 
             if (System.Threading.Interlocked.Increment(ref _presentLogs) <= 8)
             {
@@ -523,6 +528,7 @@ namespace Ryujinx.HLE.HOS.Services.Am.AppletAE.AllSystemAppletProxiesService.Sys
         private static Ryujinx.HLE.HOS.Kernel.KernelContext _dumpKernel;
         private static int _event11Logs;
         private static bool _mainStackDumped;
+        private static int _dumpKernelLogs;
         private static uint _previousFenceValue;
         private static byte[] _sourceBuffer;
         private static byte[] _linearBuffer;
