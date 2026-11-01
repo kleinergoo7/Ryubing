@@ -36,6 +36,7 @@ namespace Ryujinx.Horizon.Audio
             AudioSnoopManager audioSnoopManager = new();
 
             _serverManager.RegisterObjectForServer(audioRendererManager, ServiceName.Encode("audren:u"), MaxSessionsCount);
+            _serverManager.RegisterObjectForServer(new Nx2AudioUserClient(audioRendererManager), ServiceName.Encode("aud:u"), MaxSessionsCount);
             _serverManager.RegisterObjectForServer(audioOutManager, ServiceName.Encode("audout:u"), MaxSessionsCount);
             _serverManager.RegisterObjectForServer(audioInManager, ServiceName.Encode("audin:u"), MaxSessionsCount);
             _serverManager.RegisterObjectForServer(finalOutputRecorderManager, ServiceName.Encode("audrec:u"), MaxSessionsCount);

@@ -4,7 +4,7 @@ namespace Ryujinx.HLE.HOS.Services
     {
         public string ServiceName { get; set; }
 
-        public DummyService(string serviceName)
+        public DummyService(string serviceName) : base(registerTipc: true)
         {
             ServiceName = serviceName;
         }

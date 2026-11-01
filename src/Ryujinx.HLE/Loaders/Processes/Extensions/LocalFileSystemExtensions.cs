@@ -1,9 +1,14 @@
 using LibHac.Common;
+using LibHac.Fs;
+using LibHac.Fs.Fsa;
 using LibHac.FsSystem;
 using LibHac.Loader;
 using LibHac.Ncm;
 using LibHac.Ns;
+using LibHac.Tools.FsSystem;
+using LibHac.Tools.FsSystem.RomFs;
 using Ryujinx.HLE.Loaders.Processes.Extensions;
+using System.IO;
 
 namespace Ryujinx.HLE.Loaders.Processes
 {
@@ -24,10 +29,20 @@ namespace Ryujinx.HLE.Loaders.Processes
 
             ProcessResult processResult = exeFs.Load(device, nacpData, metaLoader, 0);
 
-            // Load RomFS.
+            // Load RomFS. A directory is exposed as a lazy RomFS view.
             if (!string.IsNullOrEmpty(romFsPath))
             {
-                device.Configuration.VirtualFileSystem.LoadRomFs(processResult.ProcessId, romFsPath);
+                if (Directory.Exists(romFsPath))
+                {
+                    using LocalFileSystem romFs = new(romFsPath);
+                    IStorage storage = new RomFsBuilder(romFs).Build();
+
+                    device.Configuration.VirtualFileSystem.SetRomFs(processResult.ProcessId, storage.AsStream());
+                }
+                else
+                {
+                    device.Configuration.VirtualFileSystem.LoadRomFs(processResult.ProcessId, romFsPath);
+                }
             }
 
             return processResult;

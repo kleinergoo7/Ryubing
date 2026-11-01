@@ -15,5 +15,12 @@ namespace Ryujinx.HLE.HOS.Services.Am
 
             return ResultCode.Success;
         }
+
+        [CommandCmif(10)]
+        // Switch 2 alias of command 0.
+        public ResultCode OpenApplicationProxySwitch2(ServiceCtx context)
+        {
+            return OpenApplicationProxy(context);
+        }
     }
 }

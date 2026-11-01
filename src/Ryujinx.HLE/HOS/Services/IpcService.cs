@@ -13,6 +13,11 @@ namespace Ryujinx.HLE.HOS.Services
 {
     abstract class IpcService
     {
+        // Diagnostic: per-service-command call counts, printed with the NX2 progress line.
+        public static readonly System.Collections.Concurrent.ConcurrentDictionary<string, int> CallCounts = [];
+
+        private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, byte> UnimplementedLogged = [];
+
         public IReadOnlyDictionary<int, MethodInfo> CmifCommands { get; }
         public IReadOnlyDictionary<int, MethodInfo> TipcCommands { get; }
 
@@ -137,6 +142,8 @@ namespace Ryujinx.HLE.HOS.Services
 #pragma warning restore IDE0059
             int commandId = (int)context.RequestData.ReadInt64();
 
+            CallCounts.AddOrUpdate($"{GetType().Name}:{commandId}", 1, (_, v) => v + 1);
+
             bool serviceExists = service.CmifCommands.TryGetValue(commandId, out MethodInfo processRequest);
 
             if (context.Device.Configuration.IgnoreMissingServices || serviceExists)
@@ -157,7 +164,30 @@ namespace Ryujinx.HLE.HOS.Services
                 {
                     string serviceName = (service is not DummyService dummyService) ? service.GetType().FullName : dummyService.ServiceName;
 
-                    Logger.Warning?.Print(LogClass.KernelIpc, $"Missing service {serviceName}: {commandId} ignored");
+                    Logger.Debug?.Print(LogClass.KernelIpc, $"Missing service {serviceName}: {commandId} ignored");
+
+                    // Diagnostic: show the payload of unimplemented commands once each, so a
+                    // guest retry loop names the call it is missing.
+                    string key = $"{service.GetType().Name}:{commandId}";
+
+                    if (UnimplementedLogged.TryAdd(key, 0))
+                    {
+                        System.IO.Stream request = context.RequestData.BaseStream;
+                        long saved = request.Position;
+                        request.Position = 0;
+
+                        int length = (int)Math.Min(request.Length, 0x40);
+                        byte[] raw = new byte[length];
+
+                        request.ReadExactly(raw, 0, length);
+                        request.Position = saved;
+
+                        string words = string.Join(' ', System.Linq.Enumerable.Select(
+                            System.Runtime.InteropServices.MemoryMarshal.Cast<byte, uint>(raw.AsSpan(0, length & ~3)).ToArray(),
+                            w => w.ToString("X8")));
+
+                        Logger.Warning?.Print(LogClass.KernelIpc, $"UNIMPLEMENTED {key} words=[{words}]");
+                    }
                 }
 
                 if (_isDomain)
@@ -189,6 +219,8 @@ namespace Ryujinx.HLE.HOS.Services
         {
             int commandId = (int)context.Request.Type - 0x10;
 
+            CallCounts.AddOrUpdate($"{GetType().Name}:{commandId}", 1, (_, v) => v + 1);
+
             bool serviceExists = TipcCommands.TryGetValue(commandId, out MethodInfo processRequest);
 
             if (context.Device.Configuration.IgnoreMissingServices || serviceExists)
@@ -211,7 +243,7 @@ namespace Ryujinx.HLE.HOS.Services
 
                     serviceName = (this is not DummyService dummyService) ? GetType().FullName : dummyService.ServiceName;
 
-                    Logger.Warning?.Print(LogClass.KernelIpc, $"Missing service {serviceName}: {commandId} ignored");
+                    Logger.Debug?.Print(LogClass.KernelIpc, $"Missing service {serviceName}: {commandId} ignored");
                 }
 
                 context.ResponseData.BaseStream.Seek(0, SeekOrigin.Begin);
@@ -244,6 +276,19 @@ namespace Ryujinx.HLE.HOS.Services
 
                 context.Response.HandleDesc = IpcHandleDesc.MakeMove(clientSessionHandle);
             }
+        }
+
+        protected void MakeSessionObject(ServiceCtx context, IpcService obj)
+        {
+            obj.TrySetServer(Server);
+
+            context.Device.System.KernelContext.Syscall.CreateSession(out int serverSessionHandle, out int clientSessionHandle, false, 0);
+
+            Logger.Warning?.Print(LogClass.KernelIpc, $"MakeSessionObject: server={serverSessionHandle:X8} client={clientSessionHandle:X8}");
+
+            Server.AddSessionObj(serverSessionHandle, obj);
+
+            context.Response.HandleDesc = IpcHandleDesc.MakeCopy(clientSessionHandle);
         }
 
         protected T GetObject<T>(ServiceCtx context, int index) where T : IpcService

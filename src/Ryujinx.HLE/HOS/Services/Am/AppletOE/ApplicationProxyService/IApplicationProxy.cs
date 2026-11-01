@@ -66,6 +66,24 @@ namespace Ryujinx.HLE.HOS.Services.Am.AppletOE.ApplicationProxyService
             return ResultCode.Success;
         }
 
+        [CommandCmif(40)]
+        // Switch 2 getter; the returned interface is fully stubbed for now.
+        public ResultCode GetSwitch2StubInterface(ServiceCtx context)
+        {
+            MakeObject(context, new DummyService("nx2:IApplicationProxy40"));
+
+            return ResultCode.Success;
+        }
+
+        [CommandCmif(60)]
+        // Switch 2 graphics scale interface.
+        public ResultCode GetGraphicsScaleController(ServiceCtx context)
+        {
+            MakeObject(context, new IGraphicsScaleController());
+
+            return ResultCode.Success;
+        }
+
         [CommandCmif(20)]
         // GetApplicationFunctions() -> object<nn::am::service::IApplicationFunctions>
         public ResultCode GetApplicationFunctions(ServiceCtx context)

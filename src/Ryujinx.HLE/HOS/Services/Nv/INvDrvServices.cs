@@ -26,6 +26,10 @@ namespace Ryujinx.HLE.HOS.Services.Nv
     [Service("nvdrv:t")]
     class INvDrvServices : IpcService
     {
+        // Diagnostic: per-ioctl counts, printed with the NX2 progress line.
+        public static readonly System.Collections.Concurrent.ConcurrentDictionary<string, int> IoctlCounts = [];
+        private int _nx2Ioctl17Trace;
+
         private static readonly List<string> _deviceFileDebugRegistry =
         [
             "/dev/nvhost-dbg-gpu",
@@ -39,6 +43,7 @@ namespace Ryujinx.HLE.HOS.Services.Nv
             { "/dev/nvhost-ctrl-gpu", typeof(NvHostCtrlGpuDeviceFile) },
             { "/dev/nvhost-as-gpu",   typeof(NvHostAsGpuDeviceFile)   },
             { "/dev/nvhost-gpu",      typeof(NvHostGpuDeviceFile)     },
+            { "/dev/nvhost-tsg-gpu",  typeof(Nx2StubDeviceFile)       },
             //{ "/dev/nvhost-msenc",    typeof(NvHostChannelDeviceFile) },
             { "/dev/nvhost-nvdec",    typeof(NvHostChannelDeviceFile) },
             //{ "/dev/nvhost-nvjpg",    typeof(NvHostChannelDeviceFile) },
@@ -64,9 +69,24 @@ namespace Ryujinx.HLE.HOS.Services.Nv
         private byte[] _ioctlArgumentBuffer = [];
         private byte[] _ioctl3Buffer = [];
 
-        public INvDrvServices(ServiceCtx context) : base(context.Device.System.NvDrvServer)
+        public INvDrvServices(ServiceCtx context, bool nvsrv = false) : base(context.Device.System.NvDrvServer)
         {
-            _owner = 0;
+            _owner = nvsrv ? context.Process.Pid : 0;
+
+            if (nvsrv)
+            {
+                _clientMemory = context.Memory;
+                _transferMemInitialized = true;
+
+                Ryujinx.HLE.Loaders.Processes.ProcessResult application = context.Device.Processes.ActiveApplication;
+
+                if (application != null &&
+                    context.Device.System.KernelContext.Processes.TryGetValue(application.ProcessId, out Ryujinx.HLE.HOS.Kernel.Process.KProcess process))
+                {
+                    _owner = application.ProcessId;
+                    _clientMemory = process.CpuMemory;
+                }
+            }
         }
 
         private NvResult Open(ServiceCtx context, string path, out int fd)
@@ -266,6 +286,9 @@ namespace Ryujinx.HLE.HOS.Services.Nv
                 int fd = context.RequestData.ReadInt32();
                 NvIoctl ioctlCommand = context.RequestData.ReadStruct<NvIoctl>();
 
+                IoctlCounts.AddOrUpdate($"{ioctlCommand.Type:X2}/{ioctlCommand.Number:X2}", 1, (_, v) => v + 1);
+
+
                 errorCode = GetIoctlArgument(context, ioctlCommand, out Span<byte> arguments);
 
                 if (errorCode == NvResult.Success)
@@ -282,6 +305,8 @@ namespace Ryujinx.HLE.HOS.Services.Nv
                         }
 
                         errorCode = ConvertInternalErrorCode(internalResult);
+
+                        Logger.Debug?.Print(LogClass.ServiceNv, $"Ioctl fd={fd} type={ioctlCommand.Type} nr=0x{ioctlCommand.Number:X2} size=0x{ioctlCommand.Size:X} -> {errorCode}");
 
                         if ((ioctlCommand.DirectionValue & NvIoctl.Direction.Write) != 0)
                         {
@@ -485,6 +510,8 @@ namespace Ryujinx.HLE.HOS.Services.Nv
                 int fd = context.RequestData.ReadInt32();
                 NvIoctl ioctlCommand = context.RequestData.ReadStruct<NvIoctl>();
 
+                IoctlCounts.AddOrUpdate($"{ioctlCommand.Type:X2}/{ioctlCommand.Number:X2}", 1, (_, v) => v + 1);
+
                 (ulong inlineInBufferPosition, ulong inlineInBufferSize) = context.Request.GetBufferType0x21(1);
 
                 errorCode = GetIoctlArgument(context, ioctlCommand, out Span<byte> arguments);
@@ -515,6 +542,8 @@ namespace Ryujinx.HLE.HOS.Services.Nv
 
                         errorCode = ConvertInternalErrorCode(internalResult);
 
+                        Logger.Debug?.Print(LogClass.ServiceNv, $"Ioctl2 fd={fd} type={ioctlCommand.Type} nr=0x{ioctlCommand.Number:X2} size=0x{ioctlCommand.Size:X} -> {errorCode}");
+
                         if ((ioctlCommand.DirectionValue & NvIoctl.Direction.Write) != 0)
                         {
                             context.Memory.Write(context.Request.GetBufferType0x22(0).Position, arguments);
@@ -534,10 +563,16 @@ namespace Ryujinx.HLE.HOS.Services.Nv
         {
             NvResult errorCode = EnsureInitialized();
 
+            Logger.Info?.Print(LogClass.ServiceNv, "Ioctl3 entry");
+
             if (errorCode == NvResult.Success)
             {
                 int fd = context.RequestData.ReadInt32();
                 NvIoctl ioctlCommand = context.RequestData.ReadStruct<NvIoctl>();
+
+                IoctlCounts.AddOrUpdate($"{ioctlCommand.Type:X2}/{ioctlCommand.Number:X2}", 1, (_, v) => v + 1);
+
+                Logger.Info?.Print(LogClass.ServiceNv, $"nv ioctl fd={fd} type=0x{ioctlCommand.Type:X2} nr=0x{ioctlCommand.Number:X2} size=0x{ioctlCommand.Size:X}");
 
                 (ulong inlineOutBufferPosition, ulong inlineOutBufferSize) = context.Request.GetBufferType0x22(1);
 
@@ -568,6 +603,8 @@ namespace Ryujinx.HLE.HOS.Services.Nv
                         }
 
                         errorCode = ConvertInternalErrorCode(internalResult);
+
+                        Logger.Debug?.Print(LogClass.ServiceNv, $"Ioctl3 fd={fd} type={ioctlCommand.Type} nr=0x{ioctlCommand.Number:X2} size=0x{ioctlCommand.Size:X} -> {errorCode}");
 
                         if ((ioctlCommand.DirectionValue & NvIoctl.Direction.Write) != 0)
                         {

@@ -86,6 +86,11 @@ namespace Ryujinx.HLE.FileSystem
             return _romFsByPid[pid];
         }
 
+        public bool TryGetRomFs(ulong pid, out Stream romFs)
+        {
+            return _romFsByPid.TryGetValue(pid, out romFs);
+        }
+
         public static string GetFullPath(string basePath, string fileName)
         {
             if (fileName.StartsWith("//"))

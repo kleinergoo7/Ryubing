@@ -424,6 +424,7 @@ namespace Ryujinx.Horizon.Sdk.Sf
             Api.CreateSession(out int serverHandle, out int clientHandle).AbortOnFailure();
             manager.RegisterSession(serverHandle, obj).AbortOnFailure();
             response.MoveHandles[index] = clientHandle;
+            Ryujinx.Common.Logging.Logger.Warning?.Print(Ryujinx.Common.Logging.LogClass.KernelIpc, $"HIPC out object {obj.ServiceObject.GetType().Name} server=0x{serverHandle:X} client=0x{clientHandle:X}");
         }
     }
 }

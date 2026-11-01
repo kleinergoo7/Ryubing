@@ -2,6 +2,7 @@ using Ryujinx.Common.Logging;
 using Ryujinx.Graphics.Gpu.Memory;
 using Ryujinx.HLE.HOS.Services.Nv.NvDrvServices.NvHostAsGpu.Types;
 using Ryujinx.HLE.HOS.Services.Nv.NvDrvServices.NvHostChannel;
+using Ryujinx.HLE.HOS.Services.Nv.NvDrvServices.NvHostCtrlGpu;
 using Ryujinx.HLE.HOS.Services.Nv.NvDrvServices.NvMap;
 using Ryujinx.Memory;
 using System;
@@ -38,11 +39,24 @@ namespace Ryujinx.HLE.HOS.Services.Nv.NvDrvServices.NvHostAsGpu
             new(SmallRegionLimit, DefaultUserSize)
         ];
 
+        private const ulong Nx2DefaultVaSplit = 0xC000000000UL;
+        private const ulong Nx2ExtraBigPageSize = 4UL << 30;
+
         private readonly AddressSpaceContext _asContext;
         private readonly NvMemoryAllocator _memoryAllocator;
 
+        private ulong _vaStart;
+        private ulong _vaSplit = Nx2DefaultVaSplit;
+        private ulong _vaEnd = Nx2DefaultVaSplit + Nx2ExtraBigPageSize;
+        private uint _bigPageSize = BigPageSize;
+
         public NvHostAsGpuDeviceFile(ServiceCtx context, IVirtualMemoryManager memory, ulong owner) : base(context, owner)
         {
+            if (NvHostCtrlGpuDeviceFile.Nx2Driver)
+            {
+                context.Device.Gpu.IsNx2Ampere = true;
+            }
+
             _asContext = new AddressSpaceContext(context.Device.Gpu.CreateMemoryManager(owner, context.Device.Memory.Size));
             _memoryAllocator = new NvMemoryAllocator();
         }
@@ -75,6 +89,12 @@ namespace Ryujinx.HLE.HOS.Services.Nv.NvDrvServices.NvHostAsGpu
                         break;
                     case 0x09:
                         result = CallIoctlMethod<InitializeExArguments>(InitializeEx, arguments);
+                        break;
+                    case 0x0B:
+                        if (NvHostCtrlGpuDeviceFile.Nx2Driver)
+                        {
+                            result = CallIoctlMethod<Nx2SyncpointShimInfo>(Nx2GetSyncpointShimInfo, arguments);
+                        }
                         break;
                     case 0x14:
                         result = CallIoctlMethod<RemapArguments>(Remap, arguments);
@@ -329,6 +349,31 @@ namespace Ryujinx.HLE.HOS.Services.Nv.NvDrvServices.NvHostAsGpu
             Debug.Assert(vaRegionStructSize == 0x18);
             Debug.Assert(_pageSizes.Length == 2);
 
+            if (NvHostCtrlGpuDeviceFile.Nx2Driver)
+            {
+                Span<VaRegion> nx2Regions = arguments.Regions.AsSpan();
+
+                nx2Regions[0] = new VaRegion
+                {
+                    Offset = _vaStart,
+                    PageSize = SmallPageSize,
+                    Pages = (_vaSplit - _vaStart) / SmallPageSize,
+                };
+
+                nx2Regions[1] = new VaRegion
+                {
+                    Offset = _vaSplit,
+                    PageSize = _bigPageSize,
+                    Pages = (_vaEnd - _vaSplit) / _bigPageSize,
+                };
+
+                arguments.BufferSize = (uint)(_pageSizes.Length * vaRegionStructSize);
+
+                Logger.Info?.Print(LogClass.ServiceNv, $"as-gpu VA regions [0x{_vaStart:X}, 0x{_vaSplit:X}) big=0x{_bigPageSize:X} [0x{_vaSplit:X}, 0x{_vaEnd:X})");
+
+                return NvInternalResult.Success;
+            }
+
             uint writeEntries = (uint)(arguments.BufferSize / vaRegionStructSize);
             if (writeEntries > _pageSizes.Length)
             {
@@ -357,7 +402,48 @@ namespace Ryujinx.HLE.HOS.Services.Nv.NvDrvServices.NvHostAsGpu
 
         private NvInternalResult InitializeEx(ref InitializeExArguments arguments)
         {
+            if (NvHostCtrlGpuDeviceFile.Nx2Driver)
+            {
+                if (arguments.BigPageSize != 0)
+                {
+                    _bigPageSize = arguments.BigPageSize;
+                }
+
+                if (arguments.Unknown0 != 0)
+                {
+                    _vaStart = arguments.Unknown0;
+                    _vaSplit = arguments.Unknown2;
+                    _vaEnd = arguments.Unknown1;
+
+                    if (_vaSplit == 0)
+                    {
+                        // Switch 2 NvRm asks for small pages over the whole range, then keeps a
+                        // big-page region past the end so both allocators stay valid.
+                        _vaSplit = _vaEnd;
+                        _vaEnd += Nx2ExtraBigPageSize;
+                    }
+                }
+
+                Logger.Info?.Print(LogClass.ServiceNv, $"as-gpu InitializeEx flags=0x{arguments.Flags:X} big_page=0x{_bigPageSize:X} VA [0x{_vaStart:X}, 0x{_vaSplit:X}, 0x{_vaEnd:X})");
+            }
+
             Logger.Stub?.PrintStub(LogClass.ServiceNv);
+
+            return NvInternalResult.Success;
+        }
+
+        private NvInternalResult Nx2GetSyncpointShimInfo(ref Nx2SyncpointShimInfo arguments)
+        {
+            // The guest maps one page at the end of its GPU VA space and reads host1x syncpoint
+            // counters through it. The GPU memory manager serves the values for that page.
+            arguments.Address = _vaEnd - 0x1000;
+            arguments.Stride = sizeof(uint);
+            arguments.Count = 192;
+
+            _asContext.Gmm.Nx2SyncpointShim = arguments.Address;
+            _asContext.Gmm.Nx2SyncpointReader = id => Context.Device.System.HostSyncpoint.ReadSyncpointValue(id);
+
+            Logger.Info?.Print(LogClass.ServiceNv, $"as-gpu syncpoint shim at 0x{arguments.Address:X} count={arguments.Count}");
 
             return NvInternalResult.Success;
         }

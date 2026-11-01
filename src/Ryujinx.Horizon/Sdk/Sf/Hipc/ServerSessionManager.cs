@@ -10,6 +10,8 @@ namespace Ryujinx.Horizon.Sdk.Sf.Hipc
 {
     class ServerSessionManager
     {
+        private static readonly System.Collections.Generic.Dictionary<string, int> _dbgCounts = [];
+
         public Result AcceptSession(int portHandle, ServiceObjectHolder obj)
         {
             return AcceptSession(out _, portHandle, obj);
@@ -142,6 +144,7 @@ namespace Ryujinx.Horizon.Sdk.Sf.Hipc
         protected void CloseSessionImpl(ServerSession session)
         {
             int sessionHandle = session.Handle;
+            Ryujinx.Common.Logging.Logger.Warning?.Print(Ryujinx.Common.Logging.LogClass.KernelIpc, $"HIPC close session=0x{sessionHandle:X} obj={session.ServiceObjectHolder.ServiceObject.GetType().Name} closedFlag={session.IsClosed}");
 
             Os.FinalizeMultiWaitHolder(session);
             DestroySession(session);
@@ -155,7 +158,28 @@ namespace Ryujinx.Horizon.Sdk.Sf.Hipc
 
         public Result ProcessRequest(ServerSession session, Span<byte> message)
         {
-            if (session.IsClosed || GetCmifCommandType(message) == CommandType.Close)
+            if (GetCmifCommandType(message) == CommandType.Close)
+            {
+                Ryujinx.Common.Logging.Logger.Warning?.Print(Ryujinx.Common.Logging.LogClass.KernelIpc, $"HIPC close-msg session=0x{session.Handle:X} obj={session.ServiceObjectHolder.ServiceObject.GetType().Name} words={string.Join(' ', System.Linq.Enumerable.Select(System.Runtime.InteropServices.MemoryMarshal.Cast<byte, uint>(message[..0x40]).ToArray(), w => w.ToString("X8")))}");
+            }
+
+            if (GetCmifCommandType(message) == CommandType.Close)
+            {
+                // Some Switch 2 clients use the session's reply buffer as the close
+                // message; closing here would make their next request fail. Keep the
+                // session and acknowledge.
+                HipcMessageData stub = HipcMessage.WriteResponse(message, 0, 0x20 / sizeof(uint), 0, 0);
+                Span<CmifOutHeader> stubHeader = MemoryMarshal.Cast<byte, CmifOutHeader>(
+                    MemoryMarshal.Cast<uint, byte>(stub.DataWords))[..1];
+                stubHeader[0] = new CmifOutHeader { Magic = CmifMessage.CmifOutHeaderMagic, Result = Result.Success };
+
+                Api.Reply(session.SessionHandle, message);
+                RegisterSessionToWaitList(session);
+
+                return Result.Success;
+            }
+
+            if (session.IsClosed)
             {
                 CloseSessionImpl(session);
 
@@ -273,6 +297,14 @@ namespace Ryujinx.Horizon.Sdk.Sf.Hipc
             Span<byte> outMessage)
         {
             HipcMessage request;
+
+            _dbgCounts.TryGetValue(objectHolder.ServiceObject.GetType().Name, out int c);
+
+            if (c < 2)
+            {
+                _dbgCounts[objectHolder.ServiceObject.GetType().Name] = c + 1;
+                Ryujinx.Common.Logging.Logger.Warning?.Print(Ryujinx.Common.Logging.LogClass.KernelIpc, $"HIPC req obj={objectHolder.ServiceObject.GetType().Name} words={string.Join(' ', System.Linq.Enumerable.Select(System.Runtime.InteropServices.MemoryMarshal.Cast<byte, uint>(inMessage[..0x30]).ToArray(), w => w.ToString("X8")))}");
+            }
 
             try
             {

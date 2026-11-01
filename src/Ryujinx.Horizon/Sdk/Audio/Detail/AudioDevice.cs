@@ -15,6 +15,8 @@ namespace Ryujinx.Horizon.Sdk.Audio.Detail
         private readonly VirtualDeviceSession[] _sessions;
         private readonly bool _isUsbDeviceSupported;
 
+        private bool _autoTuneEnabled;
+
         private SystemEventType _audioEvent;
         private SystemEventType _audioInputEvent;
         private SystemEventType _audioOutputEvent;
@@ -236,43 +238,45 @@ namespace Ryujinx.Horizon.Sdk.Audio.Detail
         [CmifCommand(15)] // 17.0.0+
         public Result AcquireAudioOutputDeviceNotification([CopyHandle] out int eventHandle, ulong deviceId)
         {
-            eventHandle = 0;
+            eventHandle = Os.GetReadableHandleOfSystemEvent(ref _audioOutputEvent);
 
-            return AudioResult.NotImplemented;
+            return Result.Success;
         }
 
         [CmifCommand(16)] // 17.0.0+
         public Result ReleaseAudioOutputDeviceNotification(ulong deviceId)
         {
-            return AudioResult.NotImplemented;
+            return Result.Success;
         }
 
         [CmifCommand(17)] // 17.0.0+
         public Result AcquireAudioInputDeviceNotification([CopyHandle] out int eventHandle, ulong deviceId)
         {
-            eventHandle = 0;
+            eventHandle = Os.GetReadableHandleOfSystemEvent(ref _audioInputEvent);
 
-            return AudioResult.NotImplemented;
+            return Result.Success;
         }
 
         [CmifCommand(18)] // 17.0.0+
         public Result ReleaseAudioInputDeviceNotification(ulong deviceId)
         {
-            return AudioResult.NotImplemented;
+            return Result.Success;
         }
 
         [CmifCommand(19)] // 18.0.0+
         public Result SetAudioDeviceOutputVolumeAutoTuneEnabled(bool enabled)
         {
-            return AudioResult.NotImplemented;
+            _autoTuneEnabled = enabled;
+
+            return Result.Success;
         }
 
         [CmifCommand(20)] // 18.0.0+
         public Result IsAudioDeviceOutputVolumeAutoTuneEnabled(out bool enabled)
         {
-            enabled = false;
+            enabled = _autoTuneEnabled;
 
-            return AudioResult.NotImplemented;
+            return Result.Success;
         }
 
         protected virtual void Dispose(bool disposing)

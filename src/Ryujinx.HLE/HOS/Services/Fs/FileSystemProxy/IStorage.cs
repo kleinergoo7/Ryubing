@@ -47,6 +47,11 @@ namespace Ryujinx.HLE.HOS.Services.Fs.FileSystemProxy
                 try
                 {
                     result = _baseStorage.Get.Read((long)offset, new OutBuffer(region.Memory.Span), (long)size);
+
+                    if (result.IsFailure())
+                    {
+                        Logger.Warning?.Print(LogClass.ServiceFs, $"IStorageRead FAIL off=0x{offset:X} size=0x{size:X} res=0x{result.Value:X}");
+                    }
                 }
                 catch (HorizonResultException hre) when (hre.IsOfResultType(ResultFs.NonRealDataVerificationFailed))
                 {

@@ -284,7 +284,8 @@ namespace Ryujinx.HLE.HOS.Services.Time.TimeZone
 
             if (!HasTimeZoneBinaryTitle())
             {
-                throw new InvalidSystemResourceException(TimeZoneSystemTitleMissingErrorMessage);
+                // Without the system archive, report a fixed UTC rule instead of aborting the guest.
+                return ResultCode.Success;
             }
 
             ResultCode result = GetTimeZoneBinary(locationName, out Stream timeZoneBinaryStream, out LocalStorage ncaFile);

@@ -14,6 +14,7 @@ using Ryujinx.HLE.HOS.Kernel.Process;
 using Ryujinx.HLE.Loaders.Executables;
 using Ryujinx.HLE.Loaders.Mods;
 using Ryujinx.HLE.Loaders.Processes;
+using Ryujinx.HLE.Loaders.Processes.Extensions;
 using System;
 using System.Collections.Generic;
 using System.Collections.Specialized;
@@ -667,7 +668,7 @@ namespace Ryujinx.HLE.HOS
                     }
 
                     modLoadResult.Npdm = new MetaLoader();
-                    modLoadResult.Npdm.Load(File.ReadAllBytes(npdmFile.FullName));
+                    modLoadResult.Npdm.LoadCompat(File.ReadAllBytes(npdmFile.FullName));
 
                     Logger.Info?.Print(LogClass.ModLoader, "main.npdm replaced");
                 }

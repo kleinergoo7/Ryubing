@@ -779,7 +779,7 @@ namespace Ryujinx.HLE.HOS.Services.Fs
         // OpenDataStorageByCurrentProcess() -> object<nn::fssrv::sf::IStorage> dataStorage
         public ResultCode OpenDataStorageByCurrentProcess(ServiceCtx context)
         {
-            LibHac.Fs.IStorage storage = context.Device.FileSystem.GetRomFs(_pid).AsStorage(true);
+            LibHac.Fs.IStorage storage = GetRomFsOrEmpty(context).AsStorage(true);
             using SharedRef<LibHac.Fs.IStorage> sharedStorage = new(storage);
             using SharedRef<IStorage> sfStorage = new(new StorageInterfaceAdapter(ref sharedStorage.Ref));
 
@@ -870,7 +870,7 @@ namespace Ryujinx.HLE.HOS.Services.Fs
         // OpenPatchDataStorageByCurrentProcess() -> object<nn::fssrv::sf::IStorage>
         public ResultCode OpenPatchDataStorageByCurrentProcess(ServiceCtx context)
         {
-            LibHac.Fs.IStorage storage = context.Device.FileSystem.GetRomFs(_pid).AsStorage(true);
+            LibHac.Fs.IStorage storage = GetRomFsOrEmpty(context).AsStorage(true);
             using SharedRef<LibHac.Fs.IStorage> sharedStorage = new(storage);
             using SharedRef<IStorage> sfStorage = new(new StorageInterfaceAdapter(ref sharedStorage.Ref));
 
@@ -890,13 +890,27 @@ namespace Ryujinx.HLE.HOS.Services.Fs
                 throw new NotImplementedException($"Accessing storage from other programs is not supported (program index = {programIndex}).");
             }
 
-            LibHac.Fs.IStorage storage = context.Device.FileSystem.GetRomFs(_pid).AsStorage(true);
+            LibHac.Fs.IStorage storage = GetRomFsOrEmpty(context).AsStorage(true);
             using SharedRef<LibHac.Fs.IStorage> sharedStorage = new(storage);
             using SharedRef<IStorage> sfStorage = new(new StorageInterfaceAdapter(ref sharedStorage.Ref));
 
             MakeObject(context, new FileSystemProxy.IStorage(ref sfStorage.Ref));
 
             return ResultCode.Success;
+        }
+
+        // Unpacked titles without a RomFS file have no registered storage;
+        // hand out an empty one instead of throwing (reads come back empty).
+        private Stream GetRomFsOrEmpty(ServiceCtx context)
+        {
+            if (!context.Device.FileSystem.TryGetRomFs(_pid, out Stream romFs))
+            {
+                Logger.Warning?.Print(LogClass.ServiceFs, $"No RomFS registered for pid {_pid}, returning empty storage.");
+
+                romFs = new MemoryStream();
+            }
+
+            return romFs;
         }
 
         [CommandCmif(400)]
