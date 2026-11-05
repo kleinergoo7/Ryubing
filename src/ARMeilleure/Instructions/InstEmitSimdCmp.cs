@@ -593,6 +593,19 @@ namespace ARMeilleure.Instructions
                 SetFlag(context, PState.ZFlag, Const(0));
                 SetFlag(context, PState.NFlag, Const(0));
 
+                // A comparison with NaN also raises the cumulative invalid-operation
+                // exception: always for FCCMPE/FCMPE (signalNaNs), and for FCCMP/FCMP
+                // only when an input is a signaling NaN. The flags are cumulative, so
+                // OR instead of overwriting what an earlier instruction raised.
+                Operand raisesInvalid = signalNaNs
+                    ? Const(1)
+                    : context.BitwiseOr(
+                        EmitIsSignalingNaN(context, n, op.Size),
+                        EmitIsSignalingNaN(context, m, op.Size));
+
+                SetFpFlag(context, FPState.IocFlag,
+                    context.BitwiseOr(GetFpFlag(FPState.IocFlag), raisesInvalid));
+
                 context.MarkLabel(lblEnd);
             }
             else
@@ -635,6 +648,36 @@ namespace ARMeilleure.Instructions
             SetFlag(context, PState.CFlag, Extract(nzcv, 1));
             SetFlag(context, PState.ZFlag, Extract(nzcv, 2));
             SetFlag(context, PState.NFlag, Extract(nzcv, 3));
+        }
+
+        /// <summary>
+        /// Returns 1 when the low lane of <paramref name="vector"/> is a signaling NaN, 0 otherwise.
+        /// Used to decide whether a non-signaling FP compare raises the invalid-operation flag.
+        /// </summary>
+        private static Operand EmitIsSignalingNaN(ArmEmitterContext context, Operand vector, int size)
+        {
+            Operand isExpAllOnes;
+            Operand hasMantissa;
+            Operand isQuiet;
+
+            if (size == 0)
+            {
+                Operand bits = context.VectorExtract(OperandType.I32, vector, 0);
+
+                isExpAllOnes = context.ICompareEqual(context.BitwiseAnd(bits, Const(0x7F800000)), Const(0x7F800000));
+                hasMantissa = context.ICompareNotEqual(context.BitwiseAnd(bits, Const(0x007FFFFF)), Const(0));
+                isQuiet = context.ICompareNotEqual(context.BitwiseAnd(bits, Const(0x00400000)), Const(0));
+            }
+            else
+            {
+                Operand bits = context.VectorExtract(OperandType.I64, vector, 0);
+
+                isExpAllOnes = context.ICompareEqual(context.BitwiseAnd(bits, Const(0x7FF0000000000000L)), Const(0x7FF0000000000000L));
+                hasMantissa = context.ICompareNotEqual(context.BitwiseAnd(bits, Const(0x000FFFFFFFFFFFFFL)), Const(0L));
+                isQuiet = context.ICompareNotEqual(context.BitwiseAnd(bits, Const(0x0008000000000000L)), Const(0L));
+            }
+
+            return context.BitwiseAnd(context.BitwiseAnd(isExpAllOnes, hasMantissa), context.BitwiseNot(isQuiet));
         }
 
         private static void EmitCmpOp(ArmEmitterContext context, Func2I emitCmp, bool scalar)

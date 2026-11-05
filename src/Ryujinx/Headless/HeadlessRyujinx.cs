@@ -20,6 +20,7 @@ using Ryujinx.HLE;
 using Ryujinx.HLE.FileSystem;
 using Ryujinx.HLE.HOS;
 using Ryujinx.HLE.HOS.Services.Account.Acc;
+using Ryujinx.HLE.Loaders.Processes;
 using Ryujinx.Input;
 using Ryujinx.Input.HLE;
 using Ryujinx.Input.SDL3;
@@ -414,16 +415,9 @@ namespace Ryujinx.Headless
 
             if (Directory.Exists(path))
             {
-                string exeFsPath = path;
-                string romFsDirectory = Path.Combine(Path.GetDirectoryName(path) ?? path, "romfs");
+                (string exeFsPath, string romFsDirectory) = LooseTitleLayout.Resolve(path);
 
-                // Loose Switch 2 dumps use <root>/exefs and <root>/romfs.
-                if (Directory.Exists(Path.Combine(path, "exefs")))
-                {
-                    exeFsPath = Path.Combine(path, "exefs");
-                }
-
-                if (Directory.Exists(romFsDirectory))
+                if (romFsDirectory != null)
                 {
                     Logger.Info?.Print(LogClass.Application, "Loading as cart with directory RomFS.");
 
@@ -447,7 +441,7 @@ namespace Ryujinx.Headless
                     {
                         Logger.Info?.Print(LogClass.Application, "Loading as cart with RomFS.");
 
-                        if (!_emulationContext.LoadCart(path, romFsFiles[0]))
+                        if (!_emulationContext.LoadCart(exeFsPath, romFsFiles[0]))
                         {
                             _emulationContext.Dispose();
 
@@ -458,7 +452,9 @@ namespace Ryujinx.Headless
                     {
                         Logger.Info?.Print(LogClass.Application, "Loading as cart WITHOUT RomFS.");
 
-                        if (!_emulationContext.LoadCart(path))
+                        // Load the resolved exeFs folder: passing the selected root
+                        // would hand a folder without main/main.npdm to the loader.
+                        if (!_emulationContext.LoadCart(exeFsPath))
                         {
                             _emulationContext.Dispose();
 

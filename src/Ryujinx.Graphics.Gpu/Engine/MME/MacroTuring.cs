@@ -80,6 +80,16 @@ namespace Ryujinx.Graphics.Gpu.Engine.MME
         private static int _failProbe;
         public static int MacrosRun;
 
+        /// <summary>
+        /// Memoized macro-call replays vs full reinterpretations (Eglantine reports ~97%
+        /// replay on title traffic; a low hit rate here means the interpreter burns the
+        /// GPU thread instead of replaying).
+        /// </summary>
+        public static int MacroMemoHits;
+        public static int MacroMemoMisses;
+
+        /// <summary>Reads one MME data-RAM word (diagnostics: the QMD ring base lives at 0x27).</summary>
+
         /// <summary>Reads one MME data-RAM word (diagnostics: the QMD ring base lives at 0x27).</summary>
         public int DataRamWord(int address)
         {
@@ -153,8 +163,12 @@ namespace Ryujinx.Graphics.Gpu.Engine.MME
 
             if (TryReplay(parameters, state))
             {
+                System.Threading.Interlocked.Increment(ref MacroMemoHits);
+
                 return;
             }
+
+            System.Threading.Interlocked.Increment(ref MacroMemoMisses);
 
             _readRegisters = false;
             _rereadDataRam = false;

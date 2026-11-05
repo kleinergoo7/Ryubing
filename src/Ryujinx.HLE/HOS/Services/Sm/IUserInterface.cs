@@ -102,13 +102,28 @@ namespace Ryujinx.HLE.HOS.Services.Sm
 
                     IpcService service = GetServiceInstance(type, context, serviceAttribute.Parameter);
 
-                    if (_commonServer is null)
+                    if (service is null)
                     {
-                        _commonServer = new ServerBase(context.Device.System.KernelContext, "Common");
+                        Logger.Warning?.Print(LogClass.Service, $"Service {name} could not be instantiated (no matching constructor); ignored");
+                        if (context.Device.Configuration.IgnoreMissingServices)
+                        {
+                            // fall through to missing-service handling below
+                        }
+                        else
+                        {
+                            throw new NotImplementedException(name);
+                        }
                     }
+                    else
+                    {
+                        if (_commonServer is null)
+                        {
+                            _commonServer = new ServerBase(context.Device.System.KernelContext, "Common");
+                        }
 
-                    service.TrySetServer(_commonServer);
-                    service.Server.AddSessionObj(session.ServerSession, service);
+                        service.TrySetServer(_commonServer);
+                        service.Server.AddSessionObj(session.ServerSession, service);
+                    }
                 }
                 else
                 {

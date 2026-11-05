@@ -51,6 +51,8 @@ namespace Ryujinx.HLE.HOS.Services.Am.AppletAE.AllSystemAppletProxiesService.Sys
         public static uint NextMemory = 1;
         public static uint NextImage = 1;
 
+        public static readonly System.Collections.Generic.HashSet<uint> AttachedAddressSpaces = [];
+
         public static (uint Width, uint Height, ulong Pitch, uint BlockHeightLog2, ulong Size) Layout(uint[] preference)
         {
             // The image preference is always 16 words; refuse a short array instead of

@@ -149,7 +149,17 @@ namespace ARMeilleure.Translation
             {
                 do
                 {
+                    ulong prevAddress = address;
                     address = ExecuteSingle(context, address);
+
+                    if (address == prevAddress && address != 0)
+                    {
+                        // Guard against an infinite re-execution loop: if a translated
+                        // function returns the same guest address it was entered at,
+                        // the dispatch loop would spin forever. Break out instead.
+                        System.Console.Error.WriteLine($"[NX2_LOOP_GUARD] stuck at 0x{address:X} (mode={context.ExecutionMode})");
+                        address = 0;
+                    }
                 }
                 while (context.Running && address != 0);
             }

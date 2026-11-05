@@ -159,6 +159,8 @@ namespace Ryujinx.HLE.HOS.Kernel.Threading
 
         public bool WaitingInArbitration { get; set; }
 
+        private static int _threadLogCount;
+
         private readonly Lock _activityOperationLock = new();
 
         internal readonly ManualResetEventSlim DebugHalt = new(false);
@@ -197,6 +199,15 @@ namespace Ryujinx.HLE.HOS.Kernel.Threading
             if ((uint)type > 3)
             {
                 throw new ArgumentException($"Invalid thread type \"{type}\".");
+            }
+
+            // Diagnostic (AGENTS.md section 9): thread lifecycle for the missing-render-thread
+            // question. Env-gated, capped; confinement via the log system.
+            if (System.Environment.GetEnvironmentVariable("NX2_THREAD_LOG") == "1" &&
+                System.Threading.Interlocked.Increment(ref _threadLogCount) <= 300)
+            {
+                Ryujinx.Common.Logging.Logger.Warning?.Print(Ryujinx.Common.Logging.LogClass.KernelSvc,
+                    $"NX2 thread start uid={ThreadUid} pc=0x{entrypoint:X} prio={priority} core={cpuCore} stack=0x{stackTop:X} pid={owner?.Pid}");
             }
 
             PreferredCore = cpuCore;

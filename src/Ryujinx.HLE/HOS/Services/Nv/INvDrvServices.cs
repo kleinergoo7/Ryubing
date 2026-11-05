@@ -71,6 +71,8 @@ namespace Ryujinx.HLE.HOS.Services.Nv
         private byte[] _ioctlArgumentBuffer = [];
         private byte[] _ioctl3Buffer = [];
 
+        public INvDrvServices(ServiceCtx context) : this(context, nvsrv: false) { }
+
         public INvDrvServices(ServiceCtx context, bool nvsrv = false) : base(context.Device.System.NvDrvServer)
         {
             _owner = nvsrv ? context.Process.Pid : 0;

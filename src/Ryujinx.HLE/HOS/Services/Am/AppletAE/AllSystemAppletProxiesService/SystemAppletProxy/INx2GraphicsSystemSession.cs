@@ -158,6 +158,26 @@ namespace Ryujinx.HLE.HOS.Services.Am.AppletAE.AllSystemAppletProxiesService.Sys
             return ResultCode.Success;
         }
 
+        // 434(u32 id from nx2:gpu 33): the session takes a reference on that GPU
+        // address space (Eglantine AttachGpuAddressSpace). Empty reply.
+        [CommandTipc(434)]
+        public ResultCode AttachGpuAddressSpace(ServiceCtx context)
+        {
+            uint id = context.RequestData.ReadUInt32();
+
+            lock (Nx2NativeObjects.Lock)
+            {
+                Nx2NativeObjects.AttachedAddressSpaces.Add(id);
+            }
+
+            if (System.Threading.Interlocked.Increment(ref _unknown434Logs) <= 4)
+            {
+                Logger.Warning?.Print(LogClass.ServiceAm, $"nx2:gsv 434 attach address space {id}");
+            }
+
+            return ResultCode.Success;
+        }
+
         // Eglantine CalculateRequirements: the client passes a 0x40-byte
         // InterModuleUserImagePreference (16 words) plus a u32 and expects the block-linear image
         // size and alignment. A zero size made the window init fail, after which
@@ -308,9 +328,18 @@ namespace Ryujinx.HLE.HOS.Services.Am.AppletAE.AllSystemAppletProxiesService.Sys
             return ResultCode.Success;
         }
 
+        // 115(u64 requested feature flags): the subset that is granted, which is all
+        // of them here (Eglantine QueryGrantedFeatures). A zeroed reply denies every
+        // feature — the renderer never initializes and no frame work is ever submitted.
         [CommandTipc(115)]
-        public ResultCode Unknown115(ServiceCtx context)
+        public ResultCode QueryGrantedFeatures(ServiceCtx context)
         {
+            ulong requested = context.RequestData.ReadUInt64();
+
+            context.ResponseData.BaseStream.Seek(4, System.IO.SeekOrigin.Begin);
+            context.ResponseData.Write((uint)requested);
+            context.ResponseData.Write((uint)(requested >> 32));
+
             return ResultCode.Success;
         }
 
@@ -402,6 +431,8 @@ namespace Ryujinx.HLE.HOS.Services.Am.AppletAE.AllSystemAppletProxiesService.Sys
 
             return ResultCode.Success;
         }
+
+        private static int _unknown434Logs;
 
         // 1202: nn::chat::gsv expects a session; 1201 is its plain stub.
         [CommandTipc(1201)]

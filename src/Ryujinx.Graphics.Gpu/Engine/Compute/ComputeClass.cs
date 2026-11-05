@@ -56,7 +56,6 @@ namespace Ryujinx.Graphics.Gpu.Engine.Compute
             {
                 { nameof(ComputeClassState.LaunchDma), new RwCallback(LaunchDma, null) },
                 { nameof(ComputeClassState.LoadInlineData), new RwCallback(LoadInlineData, null) },
-                { nameof(ComputeClassState.SendSignalingPcasB), new RwCallback(SendSignalingPcasB, null) },
                 { nameof(ComputeClassState.SetReportSemaphoreD), new RwCallback(ReportSemaphore, null) },
             });
 
@@ -79,32 +78,30 @@ namespace Ryujinx.Graphics.Gpu.Engine.Compute
         {
             _state.Write(offset, data);
 
-            if (_context.IsNx2Ampere)
+            // Switch-2-only build: compute streams always upload their macro code
+            // through this class, and PCAS always goes to the QMD 3.0 scheduler.
+            // (The Maxwell SendSignalingPcasB dispatch path is deleted.)
+            switch (offset)
             {
-                // Switch 2 compute streams upload their macro code through this class instead of
-                // the GPFIFO class; the code bank lives with the channel's other macro state.
-                switch (offset)
-                {
-                    case KeepMmeCodeMethodOffset:
-                        _fifoClass.KeepComputeMmeCode(data);
-                        break;
-                    case AddMmeCodeMethodOffset:
-                        _fifoClass.AddComputeMmeCode(data);
-                        break;
-                    case SetMmeBindPointerMethodOffset:
-                        _fifoClass.SetComputeMmeBindPointer(data);
-                        break;
-                    case BindMmeStartMethodOffset:
-                        _fifoClass.BindComputeMmeStart(data);
-                        break;
-                }
+                case KeepMmeCodeMethodOffset:
+                    _fifoClass.KeepComputeMmeCode(data);
+                    break;
+                case AddMmeCodeMethodOffset:
+                    _fifoClass.AddComputeMmeCode(data);
+                    break;
+                case SetMmeBindPointerMethodOffset:
+                    _fifoClass.SetComputeMmeBindPointer(data);
+                    break;
+                case BindMmeStartMethodOffset:
+                    _fifoClass.BindComputeMmeStart(data);
+                    break;
+            }
 
-                if (offset == SendPcasBMethodOffset ||
-                    offset == SendSignalingPcasBMethodOffset ||
-                    offset == SendSignalingPcasBNewMethodOffset)
-                {
-                    ProcessPcas((uint)data);
-                }
+            if (offset == SendPcasBMethodOffset ||
+                offset == SendSignalingPcasBMethodOffset ||
+                offset == SendSignalingPcasBNewMethodOffset)
+            {
+                ProcessPcas((uint)data);
             }
         }
 
@@ -141,11 +138,7 @@ namespace Ryujinx.Graphics.Gpu.Engine.Compute
         /// <param name="argument">Method call argument</param>
         private void ReportSemaphore(int argument)
         {
-            if (!_context.IsNx2Ampere)
-            {
-                return;
-            }
-
+            // Switch-2-only build: always runs (the Maxwell early-return is deleted).
             ulong address = ((ulong)(_state.State.SetReportSemaphoreA & 0x1ffffff) << 32) |
                              _state.State.SetReportSemaphoreB;
 
@@ -191,63 +184,6 @@ namespace Ryujinx.Graphics.Gpu.Engine.Compute
                 _channel.MemoryManager.Write(address + 4, 0u);
                 _channel.MemoryManager.Write(address + 8, _context.GetTimestamp());
             }
-        }
-
-        /// <summary>
-        /// Performs the compute dispatch operation.
-        /// </summary>
-        /// <param name="argument">Method call argument</param>
-        private void SendSignalingPcasB(int argument)
-        {
-            if (_context.IsNx2Ampere)
-            {
-                // Switch 2 QMD 3.0 streams are scheduled by ProcessPcas.
-                return;
-            }
-
-            MemoryManager memoryManager = _channel.MemoryManager;
-
-            // Since we're going to change the state, make sure any pending instanced draws are done.
-            _3dEngine.PerformDeferredDraws();
-
-            // Make sure all pending uniform buffer data is written to memory.
-            _3dEngine.FlushUboDirty();
-
-            uint qmdAddress = _state.State.SendPcasA;
-
-            ComputeQmd qmd = _channel.MemoryManager.Read<ComputeQmd>((ulong)qmdAddress << 8);
-
-            ulong shaderGpuVa = ((ulong)_state.State.SetProgramRegionAAddressUpper << 32) | _state.State.SetProgramRegionB;
-
-            shaderGpuVa += (uint)qmd.ProgramOffset;
-
-            int localMemorySize = qmd.ShaderLocalMemoryLowSize + qmd.ShaderLocalMemoryHighSize;
-
-            int sharedMemorySize = Math.Min(qmd.SharedMemorySize, _context.Capabilities.MaximumComputeSharedMemorySize);
-
-            bool[] constantBufferValid = new bool[Constants.TotalCpUniformBuffers];
-            ulong[] constantBufferAddress = new ulong[Constants.TotalCpUniformBuffers];
-            ulong[] constantBufferSize = new ulong[Constants.TotalCpUniformBuffers];
-
-            for (int index = 0; index < Constants.TotalCpUniformBuffers; index++)
-            {
-                constantBufferValid[index] = qmd.ConstantBufferValid(index);
-                constantBufferAddress[index] = (uint)qmd.ConstantBufferAddrLower(index) |
-                    (ulong)qmd.ConstantBufferAddrUpper(index) << 32;
-                constantBufferSize[index] = (ulong)qmd.ConstantBufferSize(index);
-            }
-
-            Dispatch(
-                shaderGpuVa,
-                qmd.CtaThreadDimension0,
-                qmd.CtaThreadDimension1,
-                qmd.CtaThreadDimension2,
-                localMemorySize,
-                sharedMemorySize,
-                qmd.SamplerIndex,
-                constantBufferValid,
-                constantBufferAddress,
-                constantBufferSize);
         }
 
         /// <summary>
@@ -304,6 +240,26 @@ namespace Ryujinx.Graphics.Gpu.Engine.Compute
         /// <summary>
         /// Writes a QMD release into guest memory.
         /// </summary>
+    /// <summary>
+    /// Applies a QMD release operation to the current counter value.
+    /// </summary>
+    internal static uint ApplyRelease(uint current, uint payload, bool add, bool max)
+    {
+        if (add)
+        {
+            return current + payload;
+        }
+
+        if (max)
+        {
+            // Completion counters are also advanced by other releases; a plain write would
+            // move them backwards and leave greater-or-equal acquires waiting forever.
+            return Math.Max(current, payload);
+        }
+
+        return payload;
+    }
+
         private bool ReleaseQmd(ulong address, uint payload, uint flags)
         {
             bool add = (flags & (1u << 26)) != 0;
@@ -311,22 +267,8 @@ namespace Ryujinx.Graphics.Gpu.Engine.Compute
 
             try
             {
-                if (add)
-                {
-                    uint value = _channel.MemoryManager.Read<uint>(address) + payload;
-                    _channel.MemoryManager.Write(address, value);
-                }
-                else if (max)
-                {
-                    // Completion counters are also advanced by other releases; a plain write would
-                    // move them backwards and leave greater-or-equal acquires waiting forever.
-                    uint value = Math.Max(_channel.MemoryManager.Read<uint>(address), payload);
-                    _channel.MemoryManager.Write(address, value);
-                }
-                else
-                {
-                    _channel.MemoryManager.Write(address, payload);
-                }
+                uint current = _channel.MemoryManager.Read<uint>(address);
+                _channel.MemoryManager.Write(address, ApplyRelease(current, payload, add, max));
             }
             catch (Exception)
             {

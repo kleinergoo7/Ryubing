@@ -453,6 +453,8 @@ namespace Ryujinx.HLE.HOS.Services.Nv.NvDrvServices.NvHostChannel
 
         private static int _nx2SubmitLogs;
 
+        private static int _fenceLogs;
+
         protected NvInternalResult SubmitGpfifo(ref SubmitGpfifoArguments header, Span<ulong> entries)
         {
             bool nx2 = NvHostCtrlGpuDeviceFile.Nx2Driver;
@@ -532,6 +534,15 @@ namespace Ryujinx.HLE.HOS.Services.Nv.NvDrvServices.NvHostChannel
             else
             {
                 header.Fence.Value = _device.System.HostSyncpoint.ReadSyncpointMaxValue(header.Fence.Id);
+            }
+
+            // Capped submit-fence trace: which host syncpoint each submit bumps and to
+            // what value. The game's render loop stalls when a waited fence never moves.
+            if (System.Environment.GetEnvironmentVariable("NX2_SUBMIT_LOG") == "1" &&
+                System.Threading.Interlocked.Increment(ref _fenceLogs) <= 40)
+            {
+                Ryujinx.Common.Logging.Logger.Warning?.Print(LogClass.ServiceNv,
+                    $"NX2 submit fence chan={Channel?.GetHashCode():X8} sp={header.Fence.Id} value={header.Fence.Value} inc={incrementCount}");
             }
 
             if (nx2)

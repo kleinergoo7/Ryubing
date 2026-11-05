@@ -5,6 +5,7 @@ using Ryujinx.Cpu.Jit;
 using Ryujinx.Memory;
 using Ryujinx.Tests.Unicorn;
 using System;
+using System.IO;
 using MemoryPermission = Ryujinx.Tests.Unicorn.MemoryPermission;
 
 namespace Ryujinx.Tests.Cpu
@@ -181,7 +182,20 @@ namespace Ryujinx.Tests.Cpu
 
             if (runUnicorn)
             {
-                _unicornEmu.RunForCount((_currAddress - CodeBaseAddress - 4) / 4);
+                // Guard against underflow: if fewer than two opcodes (opcode + RET)
+                // were written, the computed instruction count would wrap to a
+                // huge value and spin forever inside the reference emulator.
+                ulong byteCount = _currAddress - CodeBaseAddress;
+
+                if (byteCount >= 8)
+                {
+                    uint count = (uint)((byteCount - 4) / 4);
+
+                    if (count > 0)
+                    {
+                        _unicornEmu.RunForCount(count);
+                    }
+                }
             }
         }
 

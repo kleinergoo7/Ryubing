@@ -63,6 +63,12 @@ namespace Ryujinx.HLE.HOS.Kernel.Process
 
         public KProcessCapabilities Capabilities { get; private set; }
 
+        /// <summary>
+        /// Console generation the title targets. Sessions and SVCs read feature
+        /// gates from here instead of branching on ad-hoc flags.
+        /// </summary>
+        public CompatibilityProfile CompatibilityProfile { get; }
+
         public bool AllowCodeMemoryForJit { get; private set; }
 
         public ulong TitleId { get; private set; }
@@ -105,6 +111,8 @@ namespace Ryujinx.HLE.HOS.Kernel.Process
             _freeTlsPages = new SortedDictionary<ulong, KTlsPageInfo>();
 
             Capabilities = new KProcessCapabilities();
+
+            CompatibilityProfile = KernelContext.Device.CompatibilityProfile;
 
             AllowCodeMemoryForJit = allowCodeMemoryForJit;
 

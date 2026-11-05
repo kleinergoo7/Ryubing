@@ -13,26 +13,28 @@ namespace Ryujinx.HLE.HOS.Services.Am.AppletAE.AllSystemAppletProxiesService.Sys
     // Minimal nx2:vi2 session. Presentation is acknowledged but not displayed yet.
     class INx2Vi2Session : IpcService
     {
-        private readonly Dictionary<uint, KEvent> _events = [];
-        private readonly List<KEvent> _tickEvents = [];
-        private readonly Dictionary<int, KEvent> _tickSlots = [];
+        // Native vsync slots (Eglantine INx2Vi2Session: 8 indexed slots shared by
+        // 31/32 acquire and 261-272 bind/unbind; a slot fires on vblank while bound).
+        // Unbound slots fire too (the game waits on a fresh slot before binding it),
+        // while bind-change slots fire once and go quiet.
+        private const int NativeSlots = 8;
+        private readonly KEvent[] _nativeSlots = new KEvent[NativeSlots];
+        private readonly HashSet<KEvent> _vblankEvents = [];
         private System.Threading.Timer _tickTimer;
 
         public INx2Vi2Session() : base(registerTipc: true) { }
 
-        private void TrackTickEvent(KEvent evt)
+        private void EnsureTickTimer()
         {
-            lock (_tickEvents)
+            lock (_vblankEvents)
             {
-                _tickEvents.Add(evt);
-
-                // Oracle drives the frame loop off a 60 Hz vblank. The game also parks
-                // on the command-11 event, so tick every session event, not just 31/32.
+                // Oracle drives the frame loop off a 60 Hz vblank; the tick also
+                // resumes stalled GPU channels and signalled id events.
                 _tickTimer ??= new System.Threading.Timer(_ =>
                 {
-                    lock (_tickEvents)
+                    lock (_vblankEvents)
                     {
-                        foreach (KEvent tick in _tickEvents)
+                        foreach (KEvent tick in _vblankEvents)
                         {
                             tick.WritableEvent.Signal();
                         }
@@ -47,7 +49,73 @@ namespace Ryujinx.HLE.HOS.Services.Am.AppletAE.AllSystemAppletProxiesService.Sys
             }
         }
 
+        private void SetVsyncSlot(KEvent evt, bool on)
+        {
+            lock (_vblankEvents)
+            {
+                if (on)
+                {
+                    _vblankEvents.Add(evt);
+                }
+                else
+                {
+                    _vblankEvents.Remove(evt);
+                }
+            }
+        }
+
+        private KEvent NativeSlot(ServiceCtx context, uint index)
+        {
+            if (index >= NativeSlots)
+            {
+                Ryujinx.Common.Logging.Logger.Warning?.Print(Ryujinx.Common.Logging.LogClass.ServiceVi,
+                    $"NX2 vi2 native slot {index} out of range, handing out nothing");
+                return null;
+            }
+
+            KEvent evt = _nativeSlots[index];
+
+            if (evt == null)
+            {
+                evt = new KEvent(context.Device.System.KernelContext);
+                _nativeSlots[index] = evt;
+                Nx2EventNames.Register(evt.ReadableEvent, $"vi2native{index}");
+                SetVsyncSlot(evt, true);
+                EnsureTickTimer();
+            }
+
+            return evt;
+        }
+
         private static int _progressTicks;
+
+        private static Ryujinx.HLE.Switch _device;
+
+        // Host syncpoint values 0..7 for the render-gate question: the game waits on
+        // channel fence values, and a fence that never advances parks its render loop.
+        private static string SpValues()
+        {
+            Ryujinx.HLE.Switch device = System.Threading.Volatile.Read(ref _device);
+
+            if (device?.System?.HostSyncpoint == null)
+            {
+                return "?";
+            }
+
+            System.Text.StringBuilder sb = new();
+
+            for (uint id = 0; id < 8; id++)
+            {
+                if (id != 0)
+                {
+                    sb.Append(',');
+                }
+
+                sb.Append(device.System.HostSyncpoint.ReadSyncpointValue(id));
+            }
+
+            return sb.ToString();
+        }
 
         private static void LogProgress()
         {
@@ -73,7 +141,8 @@ namespace Ryujinx.HLE.HOS.Services.Am.AppletAE.AllSystemAppletProxiesService.Sys
             string sites = string.Join(' ', System.Linq.Enumerable.Select(
                 System.Linq.Enumerable.Take(System.Linq.Enumerable.OrderByDescending(
                     Ryujinx.HLE.HOS.Kernel.SupervisorCall.Syscall.GuestCallSites, kv => kv.Value), 8),
-                kv => $"pid{kv.Key.Pid}:0x{kv.Key.Pc:X}={kv.Value}"));
+                kv => $"pid{kv.Key.Pid}:0x{kv.Key.Pc:X}={kv.Value}" +
+                    (Ryujinx.HLE.HOS.Kernel.SupervisorCall.Syscall.GuestCallSiteInfo.TryGetValue(kv.Key, out string info) ? $"[{info}]" : "")));
 
             string missing = string.Join(' ', System.Linq.Enumerable.Select(
                 System.Linq.Enumerable.Take(System.Linq.Enumerable.OrderByDescending(
@@ -81,19 +150,35 @@ namespace Ryujinx.HLE.HOS.Services.Am.AppletAE.AllSystemAppletProxiesService.Sys
                 kv => $"{kv.Key}={kv.Value}"));
 
             Ryujinx.Common.Logging.Logger.Warning?.Print(Ryujinx.Common.Logging.LogClass.ServiceVi,
-                $"NX2 progress t={_progressTicks / 60}s submits={Nx2Counters.Submits} presents={Nx2Counters.Presents} sparseCommit={Ryujinx.Graphics.Gpu.Memory.Nx2GpuMemory.SparseCommitted >> 20}MiB dropped={Ryujinx.Graphics.Gpu.Memory.Nx2GpuMemory.SparseDropped >> 20}MiB hot=[{HotPcs()}]");
+                $"NX2 progress t={_progressTicks / 60}s submits={Nx2Counters.Submits} presents={Nx2Counters.Presents} sparseCommit={Ryujinx.Graphics.Gpu.Memory.Nx2GpuMemory.SparseCommitted >> 20}MiB dropped={Ryujinx.Graphics.Gpu.Memory.Nx2GpuMemory.SparseDropped >> 20}MiB draws={Ryujinx.Graphics.Gpu.Engine.GPFifo.Nx2GpuStall.Draws} unbound={Ryujinx.Graphics.Gpu.Engine.GPFifo.Nx2GpuStall.UnboundDrops} mme={Ryujinx.Graphics.Gpu.Engine.GPFifo.Nx2GpuStall.MacrosRun}/{Ryujinx.Graphics.Gpu.Engine.GPFifo.Nx2GpuStall.EmittedMethods}/{Ryujinx.Graphics.Gpu.Engine.GPFifo.Nx2GpuStall.MacroMemoHits}+{Ryujinx.Graphics.Gpu.Engine.GPFifo.Nx2GpuStall.MacroMemoMisses} 3d={Ryujinx.Graphics.Gpu.Engine.GPFifo.Nx2GpuStall.Describe3DMethods()} emitted=[{Ryujinx.Graphics.Gpu.Engine.GPFifo.Nx2GpuStall.DescribeEmitted()}] sp=[{SpValues()}] hot=[{HotPcs()}]");
+            Ryujinx.Common.Logging.Logger.Warning?.Print(Ryujinx.Common.Logging.LogClass.ServiceVi,
+                $"NX2 calls {calls} ioctls=[{ioctls}] gpu=[{gpu}] sites=[{sites}] missing=[{missing}]");
         }
 
-        private KEvent EventFor(ServiceCtx context, uint slot)
+        [CommandTipc(11)]
+        public ResultCode ReturnEvent(ServiceCtx context)
         {
-            if (!_events.TryGetValue(slot, out KEvent evt))
+            // Fresh event per call (Eglantine ReturnEvent): the oracle never signals
+            // it, so sharing one would satisfy a new wait with an old signal.
+            KEvent evt = new(context.Device.System.KernelContext);
+            Nx2EventNames.Register(evt.ReadableEvent, "vi2event11");
+
+            // The oracle never signals this event; signalling it spuriously kept the
+            // guest's main loop spinning in its handler instead of advancing.
+            if (System.Threading.Interlocked.Increment(ref _event11Logs) <= 2)
             {
-                evt = new KEvent(context.Device.System.KernelContext);
-                _events[slot] = evt;
-                Nx2EventNames.Register(evt.ReadableEvent, $"vi2slot{slot}");
+                Ryujinx.Common.Logging.Logger.Warning?.Print(Ryujinx.Common.Logging.LogClass.ServiceVi,
+                    "NX2 vi2 command 11 event handed out unsignalled");
             }
 
-            return evt;
+            if (context.Process.HandleTable.GenerateHandle(evt.ReadableEvent, out int handle) != Ryujinx.Horizon.Common.Result.Success)
+            {
+                throw new System.InvalidOperationException("Out of handles!");
+            }
+
+            context.Response.HandleDesc = IpcHandleDesc.MakeCopy(handle);
+
+            return ResultCode.Success;
         }
 
         [CommandTipc(1)]
@@ -115,46 +200,29 @@ namespace Ryujinx.HLE.HOS.Services.Am.AppletAE.AllSystemAppletProxiesService.Sys
             return ResultCode.Success;
         }
 
-        [CommandTipc(11)]
-        public ResultCode ReturnEvent(ServiceCtx context)
-        {
-            KEvent evt = EventFor(context, 0);
-
-            // The oracle never signals this event; only the 31/32 vsync events tick.
-            // Signalling it spuriously kept the guest's main loop spinning in its
-            // handler instead of advancing to render submission.
-            if (System.Threading.Interlocked.Increment(ref _event11Logs) <= 2)
-            {
-                Ryujinx.Common.Logging.Logger.Warning?.Print(Ryujinx.Common.Logging.LogClass.ServiceVi,
-                    "NX2 vi2 command 11 event handed out unsignalled");
-            }
-
-            if (context.Process.HandleTable.GenerateHandle(evt.ReadableEvent, out int handle) != Ryujinx.Horizon.Common.Result.Success)
-            {
-                throw new System.InvalidOperationException("Out of handles!");
-            }
-
-            context.Response.HandleDesc = IpcHandleDesc.MakeCopy(handle);
-
-            return ResultCode.Success;
-        }
-
         [CommandTipc(31)]
         [CommandTipc(32)]
         public ResultCode GetVsyncEvent(ServiceCtx context)
         {
-            // One event per vsync slot, reused: the game asks for it every frame, and a fresh
-            // event per call left every earlier one in the tick list for good, so each 16 ms tick
-            // signalled thousands of stale events and the frame loop crawled.
-            int slot = (int)context.Request.Type - 0x10;
+            // Indexed native slots (Eglantine 31 acquire / 32 duplicate): the slot
+            // index is the first data word (copy handles travel separately).
+            uint index = 0;
 
-            if (!_tickSlots.TryGetValue(slot, out KEvent evt))
+            try
             {
-                evt = new KEvent(context.Device.System.KernelContext);
-                _tickSlots[slot] = evt;
-                Nx2EventNames.Register(evt.ReadableEvent, "vi2vsync");
+                index = context.RequestData.ReadUInt32();
+            }
+            catch (Exception ex)
+            {
+                Ryujinx.Common.Logging.Logger.Warning?.Print(Ryujinx.Common.Logging.LogClass.ServiceVi,
+                    $"NX2 vi2 slot acquire without index: {ex.GetType().Name}");
+            }
 
-                TrackTickEvent(evt);
+            KEvent evt = NativeSlot(context, index);
+
+            if (evt == null)
+            {
+                return ResultCode.Success;
             }
 
             if (context.Process.HandleTable.GenerateHandle(evt.ReadableEvent, out int handle) != Ryujinx.Horizon.Common.Result.Success)
@@ -246,6 +314,82 @@ namespace Ryujinx.HLE.HOS.Services.Am.AppletAE.AllSystemAppletProxiesService.Sys
             return ResultCode.Success;
         }
 
+        private static int _modeResolutionLogs;
+
+        // 263/265/267/269/271(name[8B, "Default"], u32 slot index): bind that vsync
+        // slot to a display-change source and fire it once so the game reads the current
+        // state (Eglantine BindChange; none of them change here). The reply is empty
+        // success, not data. (261 BindDisplayVsyncEvent stays on SucceedQuietly:
+        // slots tick unconditionally here, so binding is a no-op.)
+        [CommandTipc(263)]
+        [CommandTipc(265)]
+        [CommandTipc(267)]
+        [CommandTipc(269)]
+        [CommandTipc(271)]
+        public ResultCode BindDisplayChangeEvent(ServiceCtx context)
+        {
+            byte[] name = context.RequestData.ReadBytes(8);
+            uint index = context.RequestData.ReadUInt32();
+
+            if (index < NativeSlots && _nativeSlots[index] != null)
+            {
+                KEvent evt = _nativeSlots[index];
+
+                SetVsyncSlot(evt, false);
+                evt.ReadableEvent.Signal();
+            }
+
+            if (System.Threading.Interlocked.Increment(ref _modeResolutionLogs) <= 8)
+            {
+                string display = System.Text.Encoding.ASCII.GetString(name).TrimEnd('\0');
+                Ryujinx.Common.Logging.Logger.Warning?.Print(Ryujinx.Common.Logging.LogClass.ServiceVi,
+                    $"NX2 vi2 bind change cmd={(int)context.Request.Type - 0x10} name={display} slot={index}");
+            }
+
+            return ResultCode.Success;
+        }
+
+        // 262/264/266/268/270/272: detach the slot from its source (Eglantine
+        // UnbindNativeEvent). The reply is empty success.
+        [CommandTipc(262)]
+        [CommandTipc(264)]
+        [CommandTipc(266)]
+        [CommandTipc(268)]
+        [CommandTipc(270)]
+        [CommandTipc(272)]
+        public ResultCode UnbindDisplayChangeEvent(ServiceCtx context)
+        {
+            _ = context.RequestData.ReadBytes(8);
+            uint index = context.RequestData.ReadUInt32();
+
+            if (index < NativeSlots && _nativeSlots[index] != null)
+            {
+                SetVsyncSlot(_nativeSlots[index], false);
+            }
+
+            return ResultCode.Success;
+        }
+
+        private static int _unknown351Logs;
+
+        // 351(u64, u64): purpose unknown (captured: (0xD01D728, 5) via NX2_MISSING_LOG).
+        // WORKAROUND: named success with a capped per-trigger word log instead of a
+        // silent auto-stub, so the reply shape can be inferred from guest behavior.
+        [CommandTipc(351)]
+        public ResultCode Unknown351(ServiceCtx context)
+        {
+            ulong first = context.RequestData.ReadUInt64();
+            ulong second = context.RequestData.ReadUInt64();
+
+            if (System.Threading.Interlocked.Increment(ref _unknown351Logs) <= 8)
+            {
+                Ryujinx.Common.Logging.Logger.Warning?.Print(Ryujinx.Common.Logging.LogClass.ServiceVi,
+                    $"NX2 vi2 351 first=0x{first:X} second=0x{second:X}");
+            }
+
+            return ResultCode.Success;
+        }
+
         [CommandTipc(228)]
         [CommandTipc(229)]
         public ResultCode Present(ServiceCtx context)
@@ -257,6 +401,7 @@ namespace Ryujinx.HLE.HOS.Services.Am.AppletAE.AllSystemAppletProxiesService.Sys
 
             uint imageId = context.RequestData.ReadUInt32();
 
+            System.Threading.Volatile.Write(ref _device, context.Device);
             System.Threading.Interlocked.Increment(ref Nx2Counters.Presents);
 
             if (System.Environment.GetEnvironmentVariable("NX2_METHOD_LOG") == "1" &&
@@ -343,7 +488,20 @@ namespace Ryujinx.HLE.HOS.Services.Am.AppletAE.AllSystemAppletProxiesService.Sys
                 // 24-word request: fence id at word 20, value at word 22 (after the 4 words read above).
                 if (stream.Length - stream.Position >= 19 * sizeof(uint))
                 {
-                    stream.Seek(16 * sizeof(uint), System.IO.SeekOrigin.Current);
+                    // Words 6/7 after the header: unknown flags + the drawn-area size
+                    // ((height - 1) << 16 | (width - 1), Eglantine PresentClientBuffer w[7]).
+                    // Read-only probe for the image-size question; the stream is left where
+                    // the fence parse below expects it.
+                    uint word6 = context.RequestData.ReadUInt32();
+                    uint shownSize = context.RequestData.ReadUInt32();
+
+                    if (System.Threading.Interlocked.Increment(ref _shownLogs) <= 12)
+                    {
+                        Ryujinx.Common.Logging.Logger.Warning?.Print(Ryujinx.Common.Logging.LogClass.ServiceVi,
+                            $"NX2 present words w6=0x{word6:X} shown=0x{shownSize:X} (image #{Nx2Counters.Presents})");
+                    }
+
+                    stream.Seek(14 * sizeof(uint), System.IO.SeekOrigin.Current);
 
                     uint fenceRawId = context.RequestData.ReadUInt32();
                     context.RequestData.ReadUInt32();
@@ -416,10 +574,10 @@ namespace Ryujinx.HLE.HOS.Services.Am.AppletAE.AllSystemAppletProxiesService.Sys
             context.ResponseData.Write(0u);
             context.ResponseData.Write(0u);
 
-            // Frame-paced vsync: the game starts frames on the 31/32 event.
-            lock (_tickEvents)
+            // Frame-paced vsync: the game starts frames on the native slot events.
+            lock (_vblankEvents)
             {
-                foreach (KEvent evt in _tickEvents)
+                foreach (KEvent evt in _vblankEvents)
                 {
                     evt.WritableEvent.Signal();
                 }
@@ -525,6 +683,24 @@ namespace Ryujinx.HLE.HOS.Services.Am.AppletAE.AllSystemAppletProxiesService.Sys
 
             Nx2NativeObjects.Unswizzle(source, linear, (int)width, (int)height, pitch, (int)blockHeightLog2);
 
+            // Diagnostic (AGENTS.md section 9): dump the first frames as raw RGBA so a
+            // black screen can be attributed to the guest (black content) or to the
+            // present path (content present but not displayed).
+            if (Ryujinx.Common.Nx2ProbeLog.Enabled("NX2_FRAME_DUMP"))
+            {
+                int dumpIndex = System.Threading.Interlocked.Increment(ref _frameDumps);
+
+                if (dumpIndex <= 3)
+                {
+                    string path = Ryujinx.Common.Nx2LogConfinement.ResolveLogPath($"frame-{dumpIndex}-{(int)width}x{(int)height}.rgba");
+
+                    System.IO.File.WriteAllBytes(path, linear.AsSpan(0, (int)pixelBytes).ToArray());
+
+                    Ryujinx.Common.Logging.Logger.Warning?.Print(Ryujinx.Common.Logging.LogClass.ServiceVi,
+                        $"NX2 frame dump #{dumpIndex} -> {path} ({(int)width}x{(int)height})");
+                }
+            }
+
             // MKW draws into the top-left corner of its present images: 2560x1440 docked in
             // 3840x2160 images, 1920x1080 handheld.
             int cropWidth = (int)Math.Min(width, MkwCropWidth);
@@ -583,6 +759,8 @@ namespace Ryujinx.HLE.HOS.Services.Am.AppletAE.AllSystemAppletProxiesService.Sys
             context.Device.Gpu.Window.SignalFrameReady();
             context.Device.Gpu.GPFifo.Interrupt();
         }
+
+        private static int _frameDumps;
 
         private static readonly object PresentLock = new();
         private static readonly ITexture[] _presentTextures = new ITexture[3];
@@ -718,7 +896,8 @@ namespace Ryujinx.HLE.HOS.Services.Am.AppletAE.AllSystemAppletProxiesService.Sys
 
                 foreach (Ryujinx.HLE.HOS.Kernel.Common.KSynchronizationObject obj in waited)
                 {
-                    sb.Append($"{obj?.GetType().Name ?? "null"} ");
+                    string name = Nx2EventNames.Lookup(obj);
+                    sb.Append(name != null ? $"{obj?.GetType().Name}({name}) " : $"{obj?.GetType().Name ?? "null"} ");
                 }
 
                 Ryujinx.Common.Logging.Logger.Warning?.Print(Ryujinx.Common.Logging.LogClass.ServiceVi,
@@ -729,6 +908,8 @@ namespace Ryujinx.HLE.HOS.Services.Am.AppletAE.AllSystemAppletProxiesService.Sys
         private static int _waitSamples;
 
         private static int _fenceTimeouts;
+
+        private static int _shownLogs;
 
         private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, byte> PresentSeen = new();
 

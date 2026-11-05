@@ -25,8 +25,12 @@ namespace Ryujinx.Graphics.Gpu.Engine.GPFifo
         }
 
         public static int MacrosRun => Ryujinx.Graphics.Gpu.Engine.MME.MacroTuring.MacrosRun;
+        public static int MacroMemoHits => Ryujinx.Graphics.Gpu.Engine.MME.MacroTuring.MacroMemoHits;
+        public static int MacroMemoMisses => Ryujinx.Graphics.Gpu.Engine.MME.MacroTuring.MacroMemoMisses;
         public static int EmittedMethods => Ryujinx.Graphics.Gpu.Engine.MME.MacroTuring.EmittedMethods;
         public static int Draws => Ryujinx.Graphics.Gpu.Engine.Threed.ThreedClass.DrawCount;
+
+        public static long UnboundDrops => GPFifoProcessor.UnboundDrops;
 
         public static string Tolerances => $"U={Ryujinx.Graphics.Gpu.Engine.MME.MacroTuring.TolUninitReg} F={Ryujinx.Graphics.Gpu.Engine.MME.MacroTuring.TolFifoUnderflow} S={Ryujinx.Graphics.Gpu.Engine.MME.MacroTuring.TolBadSelector} O={Ryujinx.Graphics.Gpu.Engine.MME.MacroTuring.TolOobEnd}";
 
@@ -127,6 +131,16 @@ namespace Ryujinx.Graphics.Gpu.Engine.GPFifo
         internal static readonly long[] EngineCounts = new long[6];
         internal static readonly System.Collections.Generic.Dictionary<int, int> ComputeHistogram = [];
 
+        /// <summary>
+        /// Methods dropped because their subchannel is unbound (class 0) or bound to
+        /// an engine with no MME/device-state handler. Named and counted instead of
+        /// silently skipped: a rising count with no draws means the guest drives an
+        /// engine this build does not serve.
+        /// </summary>
+        internal static long UnboundDrops;
+
+        private static int _unboundDropLogs;
+
         private static int _method3DTotal;
 
         private sealed class StallException : System.Exception;
@@ -145,6 +159,10 @@ namespace Ryujinx.Graphics.Gpu.Engine.GPFifo
 
         // Object classes the nx2 binder has not seen before, logged once each.
         private readonly System.Collections.Generic.HashSet<int> _unknownClasses = [];
+
+        // Gated probe (AGENTS.md section 9): records the object classes the Switch 2
+        // binder sees, one capped file per run.
+        private static readonly bool GpuClassLogEnabled = Ryujinx.Common.Nx2ProbeLog.Enabled("NX2_GPU_CLASS_LOG");
 
         /// <summary>
         /// Suspends this channel on an unmet semaphore acquire. Returns false when the channel is
@@ -533,6 +551,9 @@ namespace Ryujinx.Graphics.Gpu.Engine.GPFifo
                     case EngineFifo:
                         _fifoClass.Write(offset, argument);
                         break;
+                    default:
+                        LogUnboundDrop(gpuVa, offset, argument, subChannel);
+                        break;
                 }
             }
             else
@@ -572,48 +593,68 @@ namespace Ryujinx.Graphics.Gpu.Engine.GPFifo
                     _ => null,
                 };
 
-                if (state != null)
+                if (state == null)
                 {
-                    int macroIndex = (offset >> 1) & MacroIndexMask;
-                    bool compute = engine == EngineCompute;
+                    LogUnboundDrop(gpuVa, offset, argument, subChannel);
 
-                    if ((offset & 1) != 0)
+                    return;
+                }
+
+                int macroIndex = (offset >> 1) & MacroIndexMask;
+                bool compute = engine == EngineCompute;
+
+                if ((offset & 1) != 0)
+                {
+                    if (compute)
                     {
-                        if (compute)
-                        {
-                            _fifoClass.ComputeMmePushArgument(macroIndex, gpuVa, argument);
-                        }
-                        else
-                        {
-                            _fifoClass.MmePushArgument(macroIndex, gpuVa, argument);
-                        }
+                        _fifoClass.ComputeMmePushArgument(macroIndex, gpuVa, argument);
                     }
                     else
                     {
-                        if (compute)
-                        {
-                            _fifoClass.ComputeMmeStart(macroIndex, argument);
-                        }
-                        else
-                        {
-                            _fifoClass.MmeStart(macroIndex, argument);
-                        }
-                    }
-
-                    if (isLastCall)
-                    {
-                        if (compute)
-                        {
-                            _fifoClass.ComputeCallMme(macroIndex, state);
-                        }
-                        else
-                        {
-                            _fifoClass.CallMme(macroIndex, state);
-                        }
-
-                        _3dClass.PerformDeferredDraws();
+                        _fifoClass.MmePushArgument(macroIndex, gpuVa, argument);
                     }
                 }
+                else
+                {
+                    if (compute)
+                    {
+                        _fifoClass.ComputeMmeStart(macroIndex, argument);
+                    }
+                    else
+                    {
+                        _fifoClass.MmeStart(macroIndex, argument);
+                    }
+                }
+
+                if (isLastCall)
+                {
+                    if (compute)
+                    {
+                        _fifoClass.ComputeCallMme(macroIndex, state);
+                    }
+                    else
+                    {
+                        _fifoClass.CallMme(macroIndex, state);
+                    }
+
+                    _3dClass.PerformDeferredDraws();
+                }
+            }
+        }
+
+        /// <summary>
+        /// Records a method dropped because its subchannel is unbound or bound to an
+        /// engine with no MME/device-state handler. Capped logging; the total is read
+        /// from the progress line next to the draw count.
+        /// </summary>
+        private static void LogUnboundDrop(ulong gpuVa, int offset, int argument, int subChannel)
+        {
+            System.Threading.Interlocked.Increment(ref UnboundDrops);
+
+            if (System.Threading.Interlocked.Increment(ref _unboundDropLogs) <= 8)
+            {
+                Ryujinx.Common.Logging.Logger.Warning?.Print(Ryujinx.Common.Logging.LogClass.Gpu,
+                    $"NX2 unbound subchannel={subChannel} offset=0x{offset:X} value=0x{argument:X8} gpuVa=0x{gpuVa:X}");
             }
         }
 
@@ -624,13 +665,14 @@ namespace Ryujinx.Graphics.Gpu.Engine.GPFifo
         /// <param name="argument">Class ID (and engine ID in the upper bits)</param>
         private void BindObject(int subChannel, int argument)
         {
-            if (!_context.IsNx2Ampere || (uint)subChannel >= SubChannelCount)
+            if ((uint)subChannel >= SubChannelCount)
             {
                 return;
             }
 
-            // Switch 2 binds Ampere object classes. They share the Maxwell method layout, so the
-            // existing engines process them; only the class-to-engine mapping differs.
+            // Single class-to-engine map for both GPU generations (Switch-2-only build:
+            // no Maxwell fallback path). Ampere object classes share the Maxwell method
+            // layout, so the existing engines process them; only the mapping differs.
             int classId = argument & 0xffff;
 
             if (classId == 0)
@@ -655,6 +697,14 @@ namespace Ryujinx.Graphics.Gpu.Engine.GPFifo
             {
                 Ryujinx.Common.Logging.Logger.Warning?.Print(Ryujinx.Common.Logging.LogClass.ServiceNv,
                     $"Switch 2 unknown object class 0x{classId:X4} (engine {engineField}) on subchannel {subChannel}");
+            }
+
+            if (GpuClassLogEnabled)
+            {
+                bool known = classId == 0 || classId is 0xc797 or 0xc7c0 or 0xc7b5 or 0xc56f;
+
+                Ryujinx.Common.Nx2ProbeLog.Append("nx2-gpu-class.log",
+                    $"sub={subChannel} class=0x{classId:X4} engineField={engineField} known={known} engine={_subChannelEngine[subChannel]}");
             }
         }
 

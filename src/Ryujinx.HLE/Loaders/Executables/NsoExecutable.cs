@@ -2,6 +2,7 @@ using LibHac.Common.FixedArrays;
 using LibHac.Fs;
 using LibHac.Loader;
 using LibHac.Tools.FsSystem;
+using Ryujinx.Common;
 using Ryujinx.Common.Helper;
 using Ryujinx.Common.Logging;
 using System;
@@ -52,12 +53,18 @@ namespace Ryujinx.HLE.Loaders.Executables
             Name = name;
             BuildId = reader.Header.ModuleId;
 
-            if (System.Environment.GetEnvironmentVariable("NX2_DUMP_TEXT") == "1" && name != null)
+            // Agent probe (AGENTS.md section 9): dumps stay inside the workspace
+            // .nx2-logs directory. NX2_DUMP_DIR may only name a subdirectory of it;
+            // anything else is refused instead of written.
+            if (Nx2ProbeLog.Enabled("NX2_DUMP_TEXT") && name != null)
             {
-                string dir = System.Environment.GetEnvironmentVariable("NX2_DUMP_DIR") ?? ".";
+                string dumpDir = System.Environment.GetEnvironmentVariable("NX2_DUMP_DIR");
 
-                System.IO.File.WriteAllBytes(System.IO.Path.Combine(dir, name + ".text.bin"), Text.ToArray());
-                System.IO.File.WriteAllText(System.IO.Path.Combine(dir, name + ".layout.txt"), $"textOff=0x{TextOffset:X} textSize=0x{TextSize:X}");
+                System.IO.File.WriteAllBytes(
+                    Nx2LogConfinement.ResolveLogPath(name + ".text.bin", dumpDir), Text.ToArray());
+                System.IO.File.WriteAllText(
+                    Nx2LogConfinement.ResolveLogPath(name + ".layout.txt", dumpDir),
+                    $"textOff=0x{TextOffset:X} textSize=0x{TextSize:X}");
             }
 
             PrintRoSectionInfo();

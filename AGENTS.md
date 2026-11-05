@@ -14,6 +14,13 @@ Placeholders in `<angle brackets>` are filled in per project (see §0).
 - Release build command: `dotnet build Ryujinx.sln -c Release`
 - Fixture location and the env var that points to it: none — tests must be hermetic
   (no game dumps, no GPU). A test that needs a dump is skipped by default and says so.
+- Switch 2 (nx2) runs: pass `--dram-size MemoryConfiguration12GiB` for the
+  hardware-accurate layout. Note `InvalidMemoryRegion` (0xDC01) during NSO load
+  is NOT a DRAM-size or firmware/key problem — it was a headless loose-title
+  path bug (fixed: `LooseTitleLayout.Resolve`); titles are keyless and need no
+  firmware. Ryujinx logs to `<XDG_CONFIG_HOME>/Ryujinx/Logs` even with
+  `--root-data-dir`, so agent runs must set `XDG_CONFIG_HOME` under
+  `.nx2-logs/`.
 
 ## 1. Build and verify
 
@@ -124,6 +131,12 @@ Guest memory, IPC payloads, and file headers are untrusted input.
 - A probe that needs a new run must name the exact question the current logs
   cannot answer.
 - Probes are env-gated and capped by default; a probe left always-on is churn.
+- Log and temp confinement: every log, capture, dump, or temp file an agent
+  generates (including `NX2_*` probes, build logs, and test output) goes ONLY
+  inside `<workspace>/.nx2-logs/`. Never create files in `/tmp`, `/tmp/opencode`,
+  `$HOME`, `src/`, or next to user content. `NX2_LOG_DIR` defaults to
+  `.nx2-logs/` and must reject any path escaping the workspace. A run that
+  writes outside fails review; verify with `git status --porcelain`.
 
 ## 10. When unsure
 

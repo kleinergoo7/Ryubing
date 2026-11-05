@@ -1,6 +1,7 @@
 using Ryujinx.Graphics.Device;
 using Ryujinx.Graphics.Gpu.Engine.GPFifo;
 using System;
+using System.Collections.Generic;
 
 namespace Ryujinx.Graphics.Gpu.Engine.MME
 {
@@ -19,6 +20,10 @@ namespace Ryujinx.Graphics.Gpu.Engine.MME
         private bool _turing;
         private int _argument;
         private MacroHLEFunctionName _hleFunction;
+        // Args pushed before StartExecution created the engine (the guest pushes
+        // them on odd method offsets, then starts on the even offset). Buffer them
+        // here so they are not dropped by a null engine.
+        private readonly List<FifoWord> _pendingArgs = new();
 
         /// <summary>
         /// Creates a new instance of the GPU cached macro program.
@@ -73,6 +78,13 @@ namespace Ryujinx.Graphics.Gpu.Engine.MME
                 {
                     _executionEngine = new MacroInterpreter();
                 }
+
+                // Flush args that were pushed before the engine existed.
+                foreach (FifoWord pending in _pendingArgs)
+                {
+                    _executionEngine.Fifo.Enqueue(pending);
+                }
+                _pendingArgs.Clear();
             }
 
             // We don't consume the parameter buffer value, so we don't need to flush it.
@@ -133,7 +145,14 @@ namespace Ryujinx.Graphics.Gpu.Engine.MME
         /// <param name="argument">Argument to be pushed</param>
         public readonly void PushArgument(ulong gpuVa, int argument)
         {
-            _executionEngine?.Fifo.Enqueue(new FifoWord(gpuVa, argument));
+            if (_executionEngine == null)
+            {
+                _pendingArgs.Add(new FifoWord(gpuVa, argument));
+            }
+            else
+            {
+                _executionEngine.Fifo.Enqueue(new FifoWord(gpuVa, argument));
+            }
         }
     }
 }

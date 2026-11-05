@@ -212,7 +212,7 @@ namespace Ryujinx.HLE.HOS.Services.Am.AppletAE.AllSystemAppletProxiesService.Sys
                 Logger.Warning?.Print(LogClass.KernelIpc, $"nx2:gpu 102 unknown memory handle {handle}");
             }
 
-            CompleteJobs(context, slot);
+            SignalSlotAfterGpu(context, slot);
 
             return ResultCode.Success;
         }
@@ -238,8 +238,17 @@ namespace Ryujinx.HLE.HOS.Services.Am.AppletAE.AllSystemAppletProxiesService.Sys
                 Logger.Warning?.Print(LogClass.KernelIpc,
                     $"nx2:gpu 211 map [0x{first:X}, 0x{last:X}] handle={handle} offset=0x{offset:X} failed");
             }
+            else if (System.Environment.GetEnvironmentVariable("NX2_SUBMIT_LOG") == "1" &&
+                System.Threading.Interlocked.Increment(ref _mapLogs) <= 40)
+            {
+                // Capped probe (AGENTS.md section 9): map arguments distinguish genuine
+                // streaming progress (advancing ranges) from a retry loop (same range
+                // re-mapped forever because its reads return zeros).
+                Logger.Warning?.Print(LogClass.KernelIpc,
+                    $"nx2:gpu 211 map [0x{first:X}, 0x{last:X}] handle={handle} offset=0x{offset:X} slot={slot}");
+            }
 
-            CompleteJobs(context, slot);
+            SignalSlotNow(context, slot);
 
             context.ResponseData.BaseStream.Seek(4, System.IO.SeekOrigin.Begin);
             context.ResponseData.Write(0u);
@@ -264,7 +273,7 @@ namespace Ryujinx.HLE.HOS.Services.Am.AppletAE.AllSystemAppletProxiesService.Sys
             context.RequestData.ReadUInt32(); // Sync flag.
             uint slot = context.RequestData.ReadUInt32();
 
-            CompleteJobs(context, slot);
+            SignalSlotNow(context, slot);
 
             context.ResponseData.BaseStream.Seek(4, System.IO.SeekOrigin.Begin);
             context.ResponseData.Write(kind);
@@ -290,7 +299,7 @@ namespace Ryujinx.HLE.HOS.Services.Am.AppletAE.AllSystemAppletProxiesService.Sys
                 Nx2GpuMemory.Unmap(first, last - first + 1);
             }
 
-            CompleteJobs(context, slot);
+            SignalSlotAfterGpu(context, slot);
 
             return ResultCode.Success;
         }
@@ -333,7 +342,7 @@ namespace Ryujinx.HLE.HOS.Services.Am.AppletAE.AllSystemAppletProxiesService.Sys
                 return ResultCode.MemoryAllocationFailed;
             }
 
-            CompleteJobs(context, slot);
+            SignalSlotNow(context, slot);
 
             return ResultCode.Success;
         }
@@ -399,10 +408,13 @@ namespace Ryujinx.HLE.HOS.Services.Am.AppletAE.AllSystemAppletProxiesService.Sys
                 Logger.Warning?.Print(LogClass.KernelIpc, $"nx2:gpu 216 sparse map failed: {ex.GetType().Name}: {ex.Message}");
             }
 
-            CompleteJobs(context, slot);
+            SignalSlotAfterGpu(context, slot);
 
+            // Count as u64 (two words, Eglantine SubSparseMap); a single word leaves the
+            // high half stale and the guest reads a garbage request count.
             context.ResponseData.BaseStream.Seek(4, System.IO.SeekOrigin.Begin);
             context.ResponseData.Write((uint)count);
+            context.ResponseData.Write((uint)((ulong)count >> 32));
 
             return ResultCode.Success;
         }
@@ -431,7 +443,7 @@ namespace Ryujinx.HLE.HOS.Services.Am.AppletAE.AllSystemAppletProxiesService.Sys
                 }
             }
 
-            CompleteJobs(context, slot);
+            SignalSlotAfterGpu(context, slot);
 
             return ResultCode.Success;
         }
@@ -452,7 +464,13 @@ namespace Ryujinx.HLE.HOS.Services.Am.AppletAE.AllSystemAppletProxiesService.Sys
 
         private static int _jobLogs;
 
-        private void CompleteJobs(ServiceCtx context, uint slot)
+        private static int _mapLogs;
+
+        // Job completion (Eglantine SignalAfterGpu split): map/create/kind jobs
+        // complete at once, since their mappings are usable immediately; unmap and
+        // destroy jobs complete once the GPU thread has drained everything queued so
+        // far, so in-flight reads keep their backing.
+        private void SignalSlotNow(ServiceCtx context, uint slot)
         {
             if (System.Environment.GetEnvironmentVariable("NX2_SUBMIT_LOG") == "1" &&
                 System.Threading.Interlocked.Increment(ref _jobLogs) <= 40)
@@ -460,20 +478,20 @@ namespace Ryujinx.HLE.HOS.Services.Am.AppletAE.AllSystemAppletProxiesService.Sys
                 Logger.Warning?.Print(LogClass.KernelIpc, $"NX2 job complete slot={slot} cmd={context.Request.Type}");
             }
 
-            KEvent[] events;
-
-            lock (_eventsLock)
-            {
-                events = new KEvent[_events.Count];
-                _events.Values.CopyTo(events, 0);
-            }
-
-            for (int i = 0; i < events.Length; i++)
-            {
-                events[i].ReadableEvent.Signal();
-            }
-
             EventFor(context, slot).ReadableEvent.Signal();
+        }
+
+        private void SignalSlotAfterGpu(ServiceCtx context, uint slot)
+        {
+            if (System.Environment.GetEnvironmentVariable("NX2_SUBMIT_LOG") == "1" &&
+                System.Threading.Interlocked.Increment(ref _jobLogs) <= 40)
+            {
+                Logger.Warning?.Print(LogClass.KernelIpc, $"NX2 job complete slot={slot} cmd={context.Request.Type}");
+            }
+
+            KEvent evt = EventFor(context, slot);
+
+            context.Device.Gpu.GPFifo.RunAfterGpu(() => evt.ReadableEvent.Signal());
         }
     }
 }

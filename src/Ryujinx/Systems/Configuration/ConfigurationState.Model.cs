@@ -955,8 +955,9 @@ namespace Ryujinx.Ava.Systems.Configuration
             EnableHardwareAcceleration = new ReactiveObject<bool>();
         }
 
-        public HleConfiguration CreateHleConfiguration() =>
-            new(
+        public HleConfiguration CreateHleConfiguration()
+        {
+            HleConfiguration configuration = new(
                 System.DramSize,
                 System.Language.Value.Horizon,
                 System.Region.Value.Horizon,
@@ -988,5 +989,12 @@ namespace Ryujinx.Ava.Systems.Configuration
                 Debug.DebuggerSuspendOnStart,
                 Graphics.CustomVSyncInterval,
                 Hacks.ShowDirtyHacks ? Hacks.EnabledHacks : null);
+
+            // Console generation is fixed to Switch 2 (all nx2 sessions,
+            // Ampere paths and 12 GiB layouts assume it).
+            configuration.CompatibilityProfile = CompatibilityProfile.Switch2;
+
+            return configuration;
+        }
     }
 }

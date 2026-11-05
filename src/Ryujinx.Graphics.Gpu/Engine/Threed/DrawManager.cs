@@ -496,6 +496,8 @@ namespace Ryujinx.Graphics.Gpu.Engine.Threed
                 sampler?.GetHostSampler(texture),
                 new Extents2DF(srcX0, srcY0, srcX1, srcY1),
                 new Extents2DF(dstX0, dstY0, dstX1, dstY1));
+
+            ThreedClass.NotifyDraw();
         }
 
         /// <summary>
@@ -591,6 +593,8 @@ namespace Ryujinx.Graphics.Gpu.Engine.Threed
             int firstInstance,
             bool indexed)
         {
+            ThreedClass.NotifyDraw();
+
             if (instanceCount > 1)
             {
                 _channel.BufferManager.SetInstancedDrawVertexCount(count);
@@ -667,6 +671,8 @@ namespace Ryujinx.Graphics.Gpu.Engine.Threed
                 _drawState.DrawIndexed = false;
                 return;
             }
+
+            ThreedClass.NotifyDraw();
 
             PhysicalMemory memory = _channel.MemoryManager.Physical;
 
@@ -802,6 +808,8 @@ namespace Ryujinx.Graphics.Gpu.Engine.Threed
             {
                 return;
             }
+
+            ThreedClass.NotifyDraw();
 
             bool clearDepth = (argument & 1) != 0;
             bool clearStencil = (argument & 2) != 0;

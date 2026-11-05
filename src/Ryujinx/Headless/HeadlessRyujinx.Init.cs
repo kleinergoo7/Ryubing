@@ -243,6 +243,9 @@ namespace Ryujinx.Headless
                         options.DebuggerSuspendOnStart,
                         options.CustomVSyncInterval
                     )
+                    // Console generation is fixed to Switch 2 (all nx2 sessions,
+                    // Ampere paths and 12 GiB layouts assume it).
+                    { CompatibilityProfile = CompatibilityProfile.Switch2 }
                     .Configure(
                         _virtualFileSystem,
                         _libHacHorizonManager,

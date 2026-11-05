@@ -23,6 +23,8 @@ namespace Ryujinx.HLE.HOS.Services
 
         private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, byte> UnimplementedLogged = [];
 
+        private static int _missingLogCount;
+
         public IReadOnlyDictionary<int, MethodInfo> CmifCommands { get; }
         public IReadOnlyDictionary<int, MethodInfo> TipcCommands { get; }
 
@@ -312,6 +314,34 @@ namespace Ryujinx.HLE.HOS.Services
                     // count every command the emulator fakes, so a missing submission path is
                     // visible instead of looking like a guest that simply sends nothing.
                     MissingCalls.AddOrUpdate($"{GetType().Name}:{commandId}", 1, (_, v) => v + 1);
+
+                    // Targeted probe (AGENTS.md section 9): dump request words for
+                    // auto-stubbed commands so real handlers can be written. Env-gated,
+                    // capped; log confinement via Nx2ProbeLog/Nx2LogConfinement.
+                    if (System.Environment.GetEnvironmentVariable("NX2_MISSING_LOG") == "1" &&
+                        System.Threading.Interlocked.Increment(ref _missingLogCount) <= 16)
+                    {
+                        try
+                        {
+                            long saved = context.RequestData.BaseStream.Position;
+                            context.RequestData.BaseStream.Seek(0, SeekOrigin.Begin);
+                            int words = (int)System.Math.Min(12, context.RequestData.BaseStream.Length / 4);
+                            System.Text.StringBuilder sb = new();
+                            for (int i = 0; i < words; i++)
+                            {
+                                sb.Append($"{context.RequestData.ReadUInt32():X8} ");
+                            }
+                            context.RequestData.BaseStream.Seek(saved, SeekOrigin.Begin);
+                            var pc = Ryujinx.HLE.HOS.Kernel.KernelStatic.GetCurrentThread()?.Context.Pc ?? 0;
+                            Ryujinx.Common.Logging.Logger.Warning?.Print(Ryujinx.Common.Logging.LogClass.KernelIpc,
+                                $"NX2 missing {GetType().Name}:{commandId} pc=0x{pc:X} req=[{sb}]");
+                        }
+                        catch (System.Exception ex)
+                        {
+                            Ryujinx.Common.Logging.Logger.Warning?.Print(Ryujinx.Common.Logging.LogClass.KernelIpc,
+                                $"NX2 missing {GetType().Name}:{commandId} unreadable: {ex.GetType().Name}");
+                        }
+                    }
                 }
 
                 context.ResponseData.BaseStream.Seek(0, SeekOrigin.Begin);

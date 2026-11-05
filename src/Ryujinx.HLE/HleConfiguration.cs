@@ -66,6 +66,14 @@ namespace Ryujinx.HLE
         internal IHostUIHandler HostUIHandler { get; private set; }
 
         /// <summary>
+        /// Which console generation the emulated title targets. Required: <see cref="Switch"/>
+        /// throws if it is null. Sessions, processes and services read capabilities from it
+        /// instead of branching on ad-hoc flags.
+        /// </summary>
+        /// <remarks>This cannot be changed after <see cref="Switch"/> instantiation.</remarks>
+        public CompatibilityProfile CompatibilityProfile { get; set; }
+
+        /// <summary>
         /// Control the memory configuration used by the emulation context.
         /// </summary>
         /// <remarks>This cannot be changed after <see cref="Switch"/> instantiation.</remarks>

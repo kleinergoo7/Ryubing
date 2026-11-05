@@ -307,6 +307,8 @@ namespace Ryujinx.Graphics.Gpu.Engine.GPFifo
                 {
                     Ryujinx.Common.Logging.Logger.Warning?.Print(Ryujinx.Common.Logging.LogClass.Gpu,
                         $"NX2 spincr id={syncpointId} now={after} check={_context.Synchronization.GetSyncpointValue(syncpointId)}");
+                    Ryujinx.Common.Nx2ProbeLog.Append("nx2-submit.log",
+                        $"spincr id={syncpointId} now={after} check={_context.Synchronization.GetSyncpointValue(syncpointId)}");
                 }
             }
 
@@ -342,28 +344,17 @@ namespace Ryujinx.Graphics.Gpu.Engine.GPFifo
         /// <param name="argument">Method call argument</param>
         public void LoadMmeInstructionRam(int argument)
         {
-            if (_context.IsNx2Ampere)
+            // Switch-2-only build: Turing+ instructions are 96 bits (three words).
+            // The driver names the start method in LoadMmeInstructionRamPointer and
+            // streams words after it; code for method M lives at word offset M * 3,
+            // matching Mesa's mme_tu104 layout.
+            if ((uint)_mmeCodeWriteOffset < (uint)_macroCode.Length)
             {
-                // Turing+ instructions are 96 bits (three words). The driver names the
-                // start method in LoadMmeInstructionRamPointer and streams words after
-                // it; code for method M lives at word offset M * 3, matching Mesa's
-                // mme_tu104 layout ("the words are reversed in the actual encoding").
-                if ((uint)_mmeCodeWriteOffset < (uint)_macroCode.Length)
-                {
-                    _macroCode[_mmeCodeWriteOffset++] = argument;
-                    _mmeCodeGeneration++;
-                }
-
-                return;
+                _macroCode[_mmeCodeWriteOffset++] = argument;
+                _mmeCodeGeneration++;
             }
 
-            int pointer = (int)_state.State.LoadMmeInstructionRamPointer;
-
-            if ((uint)pointer < (uint)_macroCode.Length)
-            {
-                _macroCode[pointer] = argument;
-                _state.State.LoadMmeInstructionRamPointer = (uint)(pointer + 1);
-            }
+            return;
         }
 
         /// <summary>
@@ -372,14 +363,11 @@ namespace Ryujinx.Graphics.Gpu.Engine.GPFifo
         /// <param name="argument">Method call argument</param>
         public void LoadMmeInstructionRamPointer(int argument)
         {
-            if (_context.IsNx2Ampere)
-            {
-                // The pointer register names an instruction index; the code array is word packed.
-                // The guest can pass a negative or oversized instruction index; clamp it so the
-                // following writes stay inside the macro RAM.
-                _mmeCodeWriteOffset = Math.Clamp(argument, 0, _macroCode.Length / 3) * 3;
-                _mmeCodeGeneration++;
-            }
+            // Switch-2-only build: the pointer register names an instruction index;
+            // the code array is word packed. Clamp hostile indexes so the following
+            // writes stay inside the macro RAM.
+            _mmeCodeWriteOffset = Math.Clamp(argument, 0, _macroCode.Length / 3) * 3;
+            _mmeCodeGeneration++;
         }
 
         /// <summary>

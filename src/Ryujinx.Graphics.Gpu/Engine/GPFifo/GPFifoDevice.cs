@@ -19,6 +19,7 @@ namespace Ryujinx.Graphics.Gpu.Engine.GPFifo
         {
             Prefetch,
             NoPrefetch,
+            Callback,
         }
 
         /// <summary>
@@ -35,6 +36,12 @@ namespace Ryujinx.Graphics.Gpu.Engine.GPFifo
             /// The type of the command buffer.
             /// </summary>
             public CommandBufferType Type;
+
+            /// <summary>
+            /// Runs when a Callback entry reaches the front of the queue, in GPU-thread
+            /// order behind every previously queued command buffer.
+            /// </summary>
+            public Action Callback;
 
             /// <summary>
             /// Fetched data.
@@ -111,6 +118,23 @@ namespace Ryujinx.Graphics.Gpu.Engine.GPFifo
         /// </summary>
         public void SignalNewEntries()
         {
+            _event.Set();
+        }
+
+        /// <summary>
+        /// Runs an action once the GPU thread has processed everything queued so far.
+        /// Unmap and destroy jobs complete this way (Eglantine SignalAfterGpu): the
+        /// backing must stay mapped until the queued work that reads it is done.
+        /// </summary>
+        /// <param name="callback">Action to run in GPU-thread order</param>
+        public void RunAfterGpu(Action callback)
+        {
+            _commandBufferQueue.Enqueue(new CommandBuffer
+            {
+                Type = CommandBufferType.Callback,
+                Callback = callback,
+            });
+
             _event.Set();
         }
 
@@ -211,6 +235,13 @@ namespace Ryujinx.Graphics.Gpu.Engine.GPFifo
             // Process command buffers.
             while (_ibEnable && !_interrupt && _commandBufferQueue.TryDequeue(out CommandBuffer entry))
             {
+                if (entry.Type == CommandBufferType.Callback)
+                {
+                    entry.Callback?.Invoke();
+
+                    continue;
+                }
+
                 bool flushCommandBuffer = true;
 
                 if (_flushSkips != 0)

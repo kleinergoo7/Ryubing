@@ -26,6 +26,16 @@ namespace Ryujinx.HLE.HOS.Kernel.SupervisorCall
         private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, byte> WaitSiteLogged = [];
         private static readonly long[] _waitLogLast = new long[256];
 
+        // Switch 2 InfoType handling is a WORKAROUND: the real T239 kernel layout is
+        // unverified, so the values below are guesses that keep titles booting. Each
+        // trigger is logged (AGENTS.md section 8) and counted for the batched
+        // NX2_SVC_LOG probe (AGENTS.md section 9). Real values replace these once
+        // measured; until then refusing would only trade a boot for no data.
+        private const int Nx2HalfDivisor = 2;
+        internal static long Nx2RegionQueryCount;
+        internal static long Nx2RemoteMemoryQueryCount;
+        internal static long Nx2VammQueryCount;
+
         public Syscall(KernelContext context)
         {
             _context = context;
@@ -263,6 +273,15 @@ namespace Ryujinx.HLE.HOS.Kernel.SupervisorCall
         // Diagnostic: guest call-site histogram for SendSyncRequest (pid 109 only).
         public static readonly System.Collections.Concurrent.ConcurrentDictionary<(ulong Pid, ulong Pc), int> GuestCallSites = [];
 
+        // First-seen attribution per hot site: thread, handle and first TLS word
+        // (service command id), so the frame-loop composition names which render
+        // call the guest never makes instead of just counting sends per PC.
+        public static readonly System.Collections.Concurrent.ConcurrentDictionary<(ulong Pid, ulong Pc), string> GuestCallSiteInfo = [];
+
+        public static readonly System.Collections.Concurrent.ConcurrentDictionary<(ulong Pid, ulong Pc), string> GuestSendFailures = [];
+
+        private static int _sendFailLogs;
+
         private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, int> SendCounts = new();
 
         private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, int> ArbLogs = new();
@@ -327,7 +346,25 @@ namespace Ryujinx.HLE.HOS.Kernel.SupervisorCall
 
             if (caller != null)
             {
-                GuestCallSites.AddOrUpdate((caller.Owner.Pid, caller.Context.Pc), 1, (_, v) => v + 1);
+                System.ValueTuple<ulong, ulong> site = (caller.Owner.Pid, caller.Context.Pc);
+
+                GuestCallSites.AddOrUpdate(site, 1, (_, v) => v + 1);
+
+                GuestCallSiteInfo.GetOrAdd(site, _ =>
+                {
+                    uint firstWord = 0xFFFFFFFF;
+
+                    try
+                    {
+                        firstWord = caller.Owner.CpuMemory.Read<uint>(caller.TlsAddress + 0x0);
+                    }
+                    catch (System.Exception)
+                    {
+                        // TLS unreadable: keep the sentinel, the handle still identifies it.
+                    }
+
+                    return $"{caller.GetThreadName()}#{caller.ThreadUid} h=0x{handle:X} w0=0x{firstWord:X8}";
+                });
 
                 if (System.Environment.GetEnvironmentVariable("NX2_SEND_LOG") == "1" && caller.Owner.Pid == 109)
                 {
@@ -352,6 +389,20 @@ namespace Ryujinx.HLE.HOS.Kernel.SupervisorCall
             }
 
             Result result = session.SendSyncRequest();
+
+            // First failure per send site (capped): a thread spinning on a dead
+            // session looks exactly like a busy frame loop in the call counts.
+            if (result != Result.Success && caller != null &&
+                System.Threading.Interlocked.Increment(ref _sendFailLogs) <= 16)
+            {
+                System.ValueTuple<ulong, ulong> failSite = (caller.Owner.Pid, caller.Context.Pc);
+
+                if (GuestSendFailures.TryAdd(failSite, result.ToString()))
+                {
+                    Logger.Warning?.Print(LogClass.KernelSvc,
+                        $"NX2 send-sync failed tid={caller.ThreadUid}({caller.GetThreadName()}) pc=0x{caller.Context.Pc:X} h=0x{handle:X} result={result}");
+                }
+            }
 
             if (trace)
             {
@@ -2198,16 +2249,22 @@ namespace Ryujinx.HLE.HOS.Kernel.SupervisorCall
 
                             // WORKAROUND: Switch 2 address-space layout is guessed from the alias
                             // region (upper half) until the real kernel layout is known. Logged on
-                            // every trigger below.
+                            // every trigger below. See field counters Nx2RegionQueryCount.
                             case InfoType.Nx2RegionAddress:
                             case InfoType.Nx2RegionSize:
                                 {
                                     ulong aliasStart = process.MemoryManager.AliasRegionStart;
                                     ulong aliasSize = process.MemoryManager.AliasRegionEnd - aliasStart;
-                                    ulong half = aliasSize / 2;
+                                    ulong half = aliasSize / Nx2HalfDivisor;
 
                                     value = id == InfoType.Nx2RegionAddress ? aliasStart + half : half;
+                                    long regionCount = System.Threading.Interlocked.Increment(ref Nx2RegionQueryCount);
                                     Logger.Warning?.Print(LogClass.KernelSvc, $"(STUBBED) Switch 2 InfoType {(int)id} = 0x{value:X}");
+
+                                    if (Nx2ProbeLog.Enabled("NX2_SVC_LOG"))
+                                    {
+                                        Nx2ProbeLog.Append("nx2-svc.log", $"id={(int)id} value=0x{value:X} count={regionCount}");
+                                    }
                                 }
                                 break;
 
@@ -2216,14 +2273,26 @@ namespace Ryujinx.HLE.HOS.Kernel.SupervisorCall
                             case InfoType.Nx2RemoteMemorySize:
                             case InfoType.Nx2RemoteMemoryUsed:
                                 value = 0;
+                                long remoteCount = System.Threading.Interlocked.Increment(ref Nx2RemoteMemoryQueryCount);
                                 Logger.Warning?.Print(LogClass.KernelSvc, $"(STUBBED) Switch 2 InfoType {(int)id} = 0");
+
+                                if (Nx2ProbeLog.Enabled("NX2_SVC_LOG"))
+                                {
+                                    Nx2ProbeLog.Append("nx2-svc.log", $"id={(int)id} value=0 count={remoteCount}");
+                                }
                                 break;
 
                             // WORKAROUND: VAMM granule size is assumed to be one page, like Switch 1.
                             // Logged on every trigger below.
                             case InfoType.Nx2VammSize:
                                 value = KPageTableBase.PageSize;
+                                long vammCount = System.Threading.Interlocked.Increment(ref Nx2VammQueryCount);
                                 Logger.Warning?.Print(LogClass.KernelSvc, $"(STUBBED) Switch 2 InfoType 33 = 0x{value:X}");
+
+                                if (Nx2ProbeLog.Enabled("NX2_SVC_LOG"))
+                                {
+                                    Nx2ProbeLog.Append("nx2-svc.log", $"id=33 value=0x{value:X} count={vammCount}");
+                                }
                                 break;
                         }
 
@@ -2615,13 +2684,34 @@ namespace Ryujinx.HLE.HOS.Kernel.SupervisorCall
             return Result.Success;
         }
 
+        private static int _gpuAttributeLogs;
+
         [Svc(0x80)]
         public Result SetGpuMemoryAttribute(ulong address, ulong size, ulong mask, ulong attribute)
         {
-            // WORKAROUND: GPU memory attributes are accepted without effect; the guest only
-            // needs the call to succeed during boot. No per-trigger log (called thousands of
-            // times per minute); revisit if GPU coherence issues appear.
-            return Result.Success;
+            // Switch 2 GPU-attributed mapping (T239 GPU-MMIO path). Switch 1 profiles
+            // are refused: without GPU attributes the mapping is meaningless there.
+            KProcess process = KernelStatic.GetCurrentProcess();
+
+            if (process?.CompatibilityProfile?.SupportsGpuMemoryAttributes != true)
+            {
+                // No named NotImplemented exists on KernelResult; InvalidCombination
+                // matches this file's usage for unsupported call/profile combinations.
+                return KernelResult.InvalidCombination;
+            }
+
+            // Env-gated debug dump (reference design): address/size/mask/attribute.
+            int n = System.Threading.Interlocked.Increment(ref _gpuAttributeLogs);
+
+            if (System.Environment.GetEnvironmentVariable("NX2_SVC_LOG") == "1" && (n <= 4 || n % 500 == 0))
+            {
+                Ryujinx.Common.Logging.Logger.Warning?.Print(Ryujinx.Common.Logging.LogClass.KernelSvc,
+                    $"NX2 svc80 map addr=0x{address:X} size=0x{size:X} mask=0x{mask:X} attr=0x{attribute:X} n={n}");
+            }
+
+            KMemoryPermission permission = (KMemoryPermission)((uint)mask & (uint)KMemoryPermission.UserMask);
+
+            return KPageTableBase.MapIoMemory((long)address, (long)size, permission);
         }
 
         [Svc(0x7d)]

@@ -114,13 +114,13 @@ namespace Ryujinx.HLE.HOS.Services.Am.AppletAE.AllSystemAppletProxiesService.Sys
 
                 value = hostValue;
 
-                if (System.Environment.GetEnvironmentVariable("NX2_TIPC_LOG") == "1")
+                if (System.Environment.GetEnvironmentVariable("NX2_SP_LOG") == "1")
                 {
                     int n = SyncptSeen.AddOrUpdate(syncpoint, 1, (_, v) => v + 1);
 
                     if (n == 1 || n % 500 == 0)
                     {
-                        Logger.Warning?.Print(LogClass.ServiceNv, $"NX2 syncpt103 sp={syncpoint} ctr=0x{counter:X} host={hostValue} gpu={gpuValue} n={n}");
+                        Logger.Warning?.Print(LogClass.ServiceNv, $"nx2:syncpt 103 sp={syncpoint} host={hostValue} gpu={gpuValue} n={n}");
                     }
                 }
 

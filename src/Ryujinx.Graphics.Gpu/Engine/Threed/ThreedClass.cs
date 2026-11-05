@@ -799,9 +799,12 @@ namespace Ryujinx.Graphics.Gpu.Engine.Threed
         {
             _drawManager.Draw(this, topology, count, instanceCount, firstIndex, firstVertex, firstInstance, indexed);
 
+            // Counted at the dispatch points (DrawManager.DrawImpl/DrawIndirect/DrawTexture
+            // and Clear), not here: DrawBegin/DrawEnd, indirect draws, blits and clears
+            // never call this method, and conditional-off draws return before dispatch.
             if (System.Environment.GetEnvironmentVariable("NX2_WAIT_LOG") == "1")
             {
-                int n = System.Threading.Interlocked.Increment(ref DrawCount);
+                int n = System.Threading.Volatile.Read(ref DrawCount);
 
                 if (n == 1 || n % 100 == 0)
                 {
@@ -811,6 +814,16 @@ namespace Ryujinx.Graphics.Gpu.Engine.Threed
         }
 
         public static int DrawCount;
+
+        /// <summary>
+        /// Counts one dispatched draw, blit or clear. Every Switch 2 draw path funnels
+        /// through DrawManager dispatch points; the public Draw method above is only one
+        /// of them (MME HLE macros), so counting here kept real draws invisible.
+        /// </summary>
+        internal static int NotifyDraw()
+        {
+            return System.Threading.Interlocked.Increment(ref DrawCount);
+        }
 
         /// <summary>
         /// Performs a indirect draw, with parameters from a GPU buffer.

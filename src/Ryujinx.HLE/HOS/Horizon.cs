@@ -119,7 +119,10 @@ namespace Ryujinx.HLE.HOS
 
         public Horizon(Switch device)
         {
-            TickSource = new TickSource(KernelConstants.CounterFrequency);
+            // Guest arch-timer rate comes from the console profile (both Switch
+            // generations use 19.2 MHz today; the Switch 2 value is unverified,
+            // so the profile keeps a single constant until hardware says otherwise).
+            TickSource = new TickSource(device.CompatibilityProfile.TickFrequency);
 
             KernelContext = new KernelContext(
                 TickSource,

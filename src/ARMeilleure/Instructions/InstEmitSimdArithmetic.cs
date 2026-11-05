@@ -3504,6 +3504,62 @@ namespace ARMeilleure.Instructions
             }
         }
 
+        public static void Sdot_V(ArmEmitterContext context)
+        {
+            EmitDotProd(context, signed: true, byElem: false);
+        }
+
+        public static void Udot_V(ArmEmitterContext context)
+        {
+            EmitDotProd(context, signed: false, byElem: false);
+        }
+
+        public static void Sdot_Ve(ArmEmitterContext context)
+        {
+            EmitDotProd(context, signed: true, byElem: true);
+        }
+
+        public static void Udot_Ve(ArmEmitterContext context)
+        {
+            EmitDotProd(context, signed: false, byElem: true);
+        }
+
+        private static void EmitDotProd(ArmEmitterContext context, bool signed, bool byElem)
+        {
+            // Integer dot product (ARMv8.2 FEAT_DotProd): each 32-bit result lane
+            // accumulates four 8-bit products onto the destination lane.
+            // The size field (bits [23:22] = 0b10) selects this arrangement rather
+            // than an element size, so lane counts are derived from the register
+            // size here instead of op.Size. Scalarized IR keeps this correct on any
+            // host without needing an Arm64-DP or x86-VNNI intrinsic.
+            OpCodeSimdReg op = (OpCodeSimdReg)context.CurrOp;
+
+            int lanes = op.RegisterSize == RegisterSize.Simd128 ? 4 : 2;
+            int index = byElem ? ((OpCodeSimdRegElem)op).Index : 0;
+
+            Operand res = context.VectorZero();
+
+            for (int lane = 0; lane < lanes; lane++)
+            {
+                Operand acc = EmitVectorExtract(context, op.Rd, lane, 2, signed: true);
+
+                for (int j = 0; j < 4; j++)
+                {
+                    // Indexed form selects one four-byte group: bytes [index*4 .. index*4+3].
+                    int mIndex = byElem ? index * 4 + j : lane * 4 + j;
+
+                    Operand ne = EmitVectorExtract(context, op.Rn, lane * 4 + j, 0, signed);
+                    Operand me = EmitVectorExtract(context, op.Rm, mIndex, 0, signed);
+
+                    acc = context.Add(acc, context.Multiply(ne, me));
+                }
+
+                res = EmitVectorInsert(context, res, acc, lane, 2);
+            }
+
+            context.Copy(GetVec(op.Rd), res);
+        }
+
         public static void Sqabs_S(ArmEmitterContext context)
         {
             if (Optimizations.UseAdvSimd)

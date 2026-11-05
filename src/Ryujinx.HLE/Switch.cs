@@ -58,6 +58,12 @@ namespace Ryujinx.HLE
         public int CpuCoresCount = 8; // Switch 2 (Tegra T239) SoC has 8 CPU cores
 
         /// <summary>
+        /// Console generation the emulated title targets. All feature gates read
+        /// from here instead of ad-hoc flags.
+        /// </summary>
+        public CompatibilityProfile CompatibilityProfile => Configuration.CompatibilityProfile;
+
+        /// <summary>
         /// Overrides the emulated CPU core count (CLI: --cpu-cores).
         /// </summary>
         public static int? CpuCoresOverride { get; set; }
@@ -76,6 +82,7 @@ namespace Ryujinx.HLE
             ArgumentNullException.ThrowIfNull(configuration.GpuRenderer);
             ArgumentNullException.ThrowIfNull(configuration.AudioDeviceDriver);
             ArgumentNullException.ThrowIfNull(configuration.UserChannelPersistence);
+            ArgumentNullException.ThrowIfNull(configuration.CompatibilityProfile);
 
             Configuration = configuration;
             FileSystem = Configuration.VirtualFileSystem;
