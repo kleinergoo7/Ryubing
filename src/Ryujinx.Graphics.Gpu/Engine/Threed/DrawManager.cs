@@ -473,12 +473,6 @@ namespace Ryujinx.Graphics.Gpu.Engine.Threed
 
             (Image.Texture texture, Sampler sampler) = _channel.TextureManager.GetGraphicsTextureAndSampler(textureId, samplerId);
 
-            if (texture == null)
-            {
-                // Nothing to sample (unbound or unmapped texture): the draw is a no-op on hardware.
-                return;
-            }
-
             srcX0 *= texture.ScaleFactor;
             srcY0 *= texture.ScaleFactor;
             srcX1 *= texture.ScaleFactor;
@@ -496,8 +490,6 @@ namespace Ryujinx.Graphics.Gpu.Engine.Threed
                 sampler?.GetHostSampler(texture),
                 new Extents2DF(srcX0, srcY0, srcX1, srcY1),
                 new Extents2DF(dstX0, dstY0, dstX1, dstY1));
-
-            ThreedClass.NotifyDraw();
         }
 
         /// <summary>
@@ -593,8 +585,6 @@ namespace Ryujinx.Graphics.Gpu.Engine.Threed
             int firstInstance,
             bool indexed)
         {
-            ThreedClass.NotifyDraw();
-
             if (instanceCount > 1)
             {
                 _channel.BufferManager.SetInstancedDrawVertexCount(count);
@@ -671,8 +661,6 @@ namespace Ryujinx.Graphics.Gpu.Engine.Threed
                 _drawState.DrawIndexed = false;
                 return;
             }
-
-            ThreedClass.NotifyDraw();
 
             PhysicalMemory memory = _channel.MemoryManager.Physical;
 
@@ -809,8 +797,6 @@ namespace Ryujinx.Graphics.Gpu.Engine.Threed
                 return;
             }
 
-            ThreedClass.NotifyDraw();
-
             bool clearDepth = (argument & 1) != 0;
             bool clearStencil = (argument & 2) != 0;
             uint componentMask = (uint)((argument >> 2) & 0xf);
@@ -835,7 +821,7 @@ namespace Ryujinx.Graphics.Gpu.Engine.Threed
             // on the screen scissor state, then we need to force only one texture to be bound to avoid
             // host clipping.
             ScreenScissorState screenScissorState = _state.State.ScreenScissorState;
-
+            
             Span<ScissorState> scissorStateSpan = _state.State.ScissorState.AsSpan();
 
             bool clearAffectedByStencilMask = (_state.State.ClearFlags & 1) != 0;

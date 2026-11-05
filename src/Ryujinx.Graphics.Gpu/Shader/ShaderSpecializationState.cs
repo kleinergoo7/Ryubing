@@ -582,7 +582,7 @@ namespace Ryujinx.Graphics.Gpu.Shader
             {
                 Span<AttributeType> attributeTypesSpan = graphicsState.AttributeTypes.AsSpan();
                 Span<AttributeType> gAttributeTypesSpan = GraphicsState.AttributeTypes.AsSpan();
-
+                
                 for (int index = 0; index < attributeTypesSpan.Length; index++)
                 {
                     AttributeType lType = FilterAttributeType(channel, attributeTypesSpan[index]);
@@ -733,7 +733,7 @@ namespace Ryujinx.Graphics.Gpu.Shader
             int constantBufferUsePerStageMask = _constantBufferUsePerStage;
 
             Span<uint> constantBufferUseSpan = ConstantBufferUse.AsSpan();
-
+            
             while (constantBufferUsePerStageMask != 0)
             {
                 int index = BitOperations.TrailingZeroCount(constantBufferUsePerStageMask);
@@ -883,7 +883,7 @@ namespace Ryujinx.Graphics.Gpu.Shader
             int constantBufferUsePerStageMask = specState._constantBufferUsePerStage;
 
             Span<uint> constantBufferUseSpan = specState.ConstantBufferUse.AsSpan();
-
+            
             while (constantBufferUsePerStageMask != 0)
             {
                 int index = BitOperations.TrailingZeroCount(constantBufferUsePerStageMask);
@@ -986,7 +986,7 @@ namespace Ryujinx.Graphics.Gpu.Shader
             dataWriter.Write(ref _constantBufferUsePerStage);
 
             int constantBufferUsePerStageMask = _constantBufferUsePerStage;
-
+            
             Span<uint> constantBufferUseSpan = ConstantBufferUse.AsSpan();
 
             while (constantBufferUsePerStageMask != 0)

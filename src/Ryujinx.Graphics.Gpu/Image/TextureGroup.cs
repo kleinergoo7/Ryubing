@@ -266,11 +266,11 @@ namespace Ryujinx.Graphics.Gpu.Image
 
             return dirty;
         }
-
+        
         bool CheckDirtyCallback(int baseHandle, int regionCount, bool split, bool consume)
         {
             bool dirty = false;
-
+            
             for (int i = 0; i < regionCount; i++)
             {
                 TextureGroupHandle group = _handles[baseHandle + i];
@@ -301,7 +301,7 @@ namespace Ryujinx.Graphics.Gpu.Image
         {
             EvaluateRelevantHandles(texture, _discardDataCallback, out _);
         }
-
+        
         bool DiscardDataCallback(int baseHandle, int regionCount, bool split, bool bound)
         {
             for (int i = 0; i < regionCount; i++)
@@ -723,7 +723,7 @@ namespace Ryujinx.Graphics.Gpu.Image
 
                     group.SignalModified(_context);
                 }
-
+                
                 return true;
             }, out _);
         }
@@ -738,10 +738,10 @@ namespace Ryujinx.Graphics.Gpu.Image
             ModifiedSequence = _context.GetModifiedSequence();
 
             ClearIncompatibleOverlaps(texture);
-
+            
             EvaluateRelevantHandles(texture, _signalModifyingCallback, out _, bound);
         }
-
+        
         bool SignalModifyingCallback(int baseHandle, int regionCount, bool split, bool bound)
         {
             for (int i = 0; i < regionCount; i++)
@@ -750,7 +750,7 @@ namespace Ryujinx.Graphics.Gpu.Image
 
                 group.SignalModifying(bound, _context);
             }
-
+            
             return true;
         }
 
@@ -825,7 +825,7 @@ namespace Ryujinx.Graphics.Gpu.Image
             int targetLevelHandles = _hasMipViews ? levels : 1;
 
             result = false;
-
+            
             if (_isBuffer)
             {
                 return;

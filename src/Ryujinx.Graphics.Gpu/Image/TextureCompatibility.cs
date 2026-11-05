@@ -81,7 +81,7 @@ namespace Ryujinx.Graphics.Gpu.Image
                         ? new FormatInfo(Format.Bc7Unorm, 4, 4, 16, 4)
                         : new FormatInfo(Format.R8G8B8A8Unorm, 1, 1, 4, 4);
                 }
-
+                
                 if (info.FormatInfo.Format.IsAstcSrgb)
                 {
                     return GraphicsConfig.EnableTextureRecompression

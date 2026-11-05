@@ -24,7 +24,7 @@ namespace Ryujinx.Graphics.Gpu.Memory
         /// End address of the range in guest memory.
         /// </summary>
         public ulong EndAddress => Address + Size;
-
+        
         public BufferModifiedRange Next { get; set; }
         public BufferModifiedRange Previous { get; set; }
 
@@ -186,7 +186,7 @@ namespace Ryujinx.Graphics.Gpu.Memory
                         Add(new BufferModifiedRange(endAddress, first.EndAddress - endAddress,
                             first.SyncNumber, first.Parent));
                     }
-
+                    
                     first.Size = address - first.Address;
                 }
                 else
@@ -202,9 +202,9 @@ namespace Ryujinx.Graphics.Gpu.Memory
                         first.Size = size;
                         first.SyncNumber = syncNumber;
                         first.Parent = this;
-
+                        
                         Lock.ExitWriteLock();
-
+                        
                         return;
                     }
                 }
@@ -247,7 +247,7 @@ namespace Ryujinx.Graphics.Gpu.Memory
             {
                 Add(new BufferModifiedRange(address, size, syncNumber, this));
             }
-
+            
             Lock.ExitWriteLock();
         }
 
@@ -296,7 +296,7 @@ namespace Ryujinx.Graphics.Gpu.Memory
                     BufferModifiedRange overlap = overlaps[i];
                     rangeAction(overlap.Address, overlap.Size);
                 }
-
+                
                 ArrayPool<BufferModifiedRange>.Shared.Return(overlaps);
             }
         }
@@ -411,7 +411,7 @@ namespace Ryujinx.Graphics.Gpu.Memory
 
                 return;
             }
-
+            
             Lock.EnterWriteLock();
             // We use the non-span method here because the array is partially modified by the code, which would invalidate a span.
             BufferModifiedRange[] overlaps = FindOverlapsAsArray(address, size, out int rangeCount);
@@ -419,7 +419,7 @@ namespace Ryujinx.Graphics.Gpu.Memory
             if (rangeCount == 0)
             {
                 Lock.ExitWriteLock();
-
+                
                 return;
             }
 
@@ -443,7 +443,7 @@ namespace Ryujinx.Graphics.Gpu.Memory
             if (highestDiff == long.MinValue)
             {
                 Lock.ExitWriteLock();
-
+                
                 return;
             }
 
@@ -451,9 +451,9 @@ namespace Ryujinx.Graphics.Gpu.Memory
             _context.Renderer.WaitSync(currentSync + (ulong)highestDiff);
 
             RemoveRangesAndFlush(overlaps, rangeCount, highestDiff, currentSync, address, endAddress);
-
+            
             ArrayPool<BufferModifiedRange>.Shared.Return(overlaps!);
-
+            
             Lock.ExitWriteLock();
         }
 
@@ -514,7 +514,7 @@ namespace Ryujinx.Graphics.Gpu.Memory
                     registerRangeAction(range.Address, range.Size);
                 }
             }
-
+            
             ArrayPool<BufferModifiedRange>.Shared.Return(inheritRanges);
         }
 
@@ -564,7 +564,7 @@ namespace Ryujinx.Graphics.Gpu.Memory
                 {
                     Add(new BufferModifiedRange(endAddress, overlap.EndAddress - endAddress, overlap.SyncNumber, overlap.Parent));
                 }
-
+                
                 overlap.Size = address - overlap.Address;
             }
             else if (overlap.EndAddress > endAddress)
@@ -588,7 +588,7 @@ namespace Ryujinx.Graphics.Gpu.Memory
             ulong endAddress = address + size;
             Lock.EnterWriteLock();
             (BufferModifiedRange first, BufferModifiedRange last) = FindOverlapsAsNodes(address, size);
-
+            
             if (first is null)
             {
                 Lock.ExitWriteLock();

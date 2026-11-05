@@ -53,15 +53,6 @@ namespace Ryujinx.Graphics.Gpu.Engine.Threed
 
             if (evt == null)
             {
-                // Switch 2 titles keep the counter in memory this emulator may not back. Falling
-                // back to "not requested" keeps the draw instead of dropping the whole scene.
-                if (!memoryManager.IsGpuAddressBacked(gpuVa))
-                {
-                    LogUnbackedCondition(gpuVa);
-
-                    return ConditionalRenderEnabled.True;
-                }
-
                 return ConditionalRenderEnabled.False;
             }
 
@@ -122,26 +113,6 @@ namespace Ryujinx.Graphics.Gpu.Engine.Threed
 
                 return (isEqual ? x == y : x != y) ? ConditionalRenderEnabled.True : ConditionalRenderEnabled.False;
             }
-        }
-
-        private static readonly System.Collections.Generic.HashSet<ulong> _unbackedConditions = [];
-
-        /// <summary>
-        /// Records a conditional-render address the guest never mapped, once per address.
-        /// </summary>
-        /// <param name="gpuVa">GPU virtual address of the condition counter</param>
-        private static void LogUnbackedCondition(ulong gpuVa)
-        {
-            lock (_unbackedConditions)
-            {
-                if (_unbackedConditions.Count >= 8 || !_unbackedConditions.Add(gpuVa))
-                {
-                    return;
-                }
-            }
-
-            Logger.Warning?.Print(LogClass.Gpu,
-                $"Conditional render counter at unbacked GPU address 0x{gpuVa:X}: draws are not skipped");
         }
 
         /// <summary>

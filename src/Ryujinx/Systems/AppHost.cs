@@ -113,7 +113,6 @@ namespace Ryujinx.Ava.Systems
         private bool _isStopped;
         private bool _isActive;
         private bool _renderingStarted;
-        private int _dbgPresented;
 
         private readonly ManualResetEvent _gpuDoneEvent;
 
@@ -582,7 +581,7 @@ namespace Ryujinx.Ava.Systems
             _isActive = false;
             _viewModel.IsPaused = false;
             _playTimer.Stop();
-
+            
             GCSettings.LatencyMode = GCLatencyMode.Interactive;
             if (ConfigurationState.Instance.System.GCLowLatency)
             {
@@ -625,7 +624,7 @@ namespace Ryujinx.Ava.Systems
             NpadManager.Dispose();
             TouchScreenManager.Dispose();
             Device.Dispose();
-
+            
             // NOTE: The render loop is allowed to stay alive until the renderer itself is disposed, as it may handle resource dispose.
             // We only need to wait for all commands submitted during the main gpu loop to be processed.
             // If the GPU has no work and is cancelled, we need to handle that as well.
@@ -637,10 +636,10 @@ namespace Ryujinx.Ava.Systems
                 // Waiting for work to be finished before we dispose.
                 Device.Gpu.WaitUntilGpuReady();
             }
-
+            
             _gpuDoneEvent.Dispose();
             _gpuCancellationTokenSource.Dispose();
-
+            
             DisposeGpu();
             AppExit?.Invoke(this, EventArgs.Empty);
         }
@@ -650,10 +649,10 @@ namespace Ryujinx.Ava.Systems
         {
             if (Device.Processes != null)
             {
-                MainWindowViewModel.UpdateGameMetadata(Device.Processes.ActiveApplication?.ProgramIdText,
+                MainWindowViewModel.UpdateGameMetadata(Device.Processes.ActiveApplication?.ProgramIdText, 
                     _playTimer.Elapsed);
             }
-
+            
             ConfigurationState.Instance.System.IgnoreMissingServices.Event -= UpdateIgnoreMissingServicesState;
             ConfigurationState.Instance.Graphics.AspectRatio.Event -= UpdateAspectRatioState;
             ConfigurationState.Instance.System.EnableDockedMode.Event -= UpdateDockedModeState;
@@ -671,7 +670,7 @@ namespace Ryujinx.Ava.Systems
 
             _chrono.Stop();
             _playTimer.Stop();
-
+            
             GCSettings.LatencyMode = GCLatencyMode.Interactive;
             if (ConfigurationState.Instance.System.GCLowLatency)
             {
@@ -704,7 +703,7 @@ namespace Ryujinx.Ava.Systems
                 {
                     Device.Gpu.WaitUntilGpuReady();
                 }
-
+                
                 Device.DisposeGpu();
             }
         }
@@ -804,34 +803,20 @@ namespace Ryujinx.Ava.Systems
             }
             else if (Directory.Exists(ApplicationPath))
             {
-                string exeFsPath = ApplicationPath;
-                string romFsDirectory = Path.Combine(Path.GetDirectoryName(ApplicationPath) ?? ApplicationPath, "romfs");
-
-                // Loose Switch 2 dumps use <root>/exefs and <root>/romfs.
-                if (Directory.Exists(Path.Combine(ApplicationPath, "exefs")))
-                {
-                    exeFsPath = Path.Combine(ApplicationPath, "exefs");
-                    romFsDirectory = Path.Combine(ApplicationPath, "romfs");
-                }
-
-                string[] romFsFiles = Directory.GetFiles(exeFsPath, "*.istorage");
+                string[] romFsFiles = Directory.GetFiles(ApplicationPath, "*.istorage");
 
                 if (romFsFiles.Length == 0)
                 {
-                    romFsFiles = Directory.GetFiles(exeFsPath, "*.romfs");
+                    romFsFiles = Directory.GetFiles(ApplicationPath, "*.romfs");
                 }
 
-                Logger.Notice.Print(LogClass.Application, $"Loading unpacked content archive from '{exeFsPath}'.");
+                Logger.Notice.Print(LogClass.Application, $"Loading unpacked content archive from '{ApplicationPath}'.");
 
-                string romFsPath = romFsFiles.Length > 0
-                    ? romFsFiles[0]
-                    : Directory.Exists(romFsDirectory) ? romFsDirectory : null;
-
-                if (romFsPath != null)
+                if (romFsFiles.Length > 0)
                 {
                     Logger.Info?.Print(LogClass.Application, "Loading as cart with RomFS.");
 
-                    if (!Device.LoadCart(exeFsPath, romFsPath))
+                    if (!Device.LoadCart(ApplicationPath, romFsFiles[0]))
                     {
                         await ContentDialogHelper.CreateErrorDialog(LocaleManager.Instance.UpdateAndGetDynamicValue(LocaleKeys.Error_NoUnpackedApplicationFoundInFolder));
                         Device.Dispose();
@@ -843,7 +828,7 @@ namespace Ryujinx.Ava.Systems
                 else
                 {
                     Logger.Info?.Print(LogClass.Application, "Loading as cart WITHOUT RomFS.");
-                    if (!Device.LoadCart(exeFsPath))
+                    if (!Device.LoadCart(ApplicationPath))
                     {
                         await ContentDialogHelper.CreateErrorDialog(LocaleManager.Instance.UpdateAndGetDynamicValue(LocaleKeys.Error_NoUnpackedApplicationFoundInFolder));
                         Device.Dispose();
@@ -942,7 +927,7 @@ namespace Ryujinx.Ava.Systems
             ApplicationLibrary.LoadAndSaveMetaData(Device.Processes.ActiveApplication.ProgramIdText,
                 appMetadata => appMetadata.UpdatePreGame()
             );
-
+            
             _playTimer.Start();
 
             if (ConfigurationState.Instance.System.GCLowLatency)
@@ -960,7 +945,7 @@ namespace Ryujinx.Ava.Systems
             _playTimer.Start();
             _viewModel.Title = TitleHelper.ActiveApplicationTitle(Device?.Processes.ActiveApplication, Program.Version, !ConfigurationState.Instance.ShowOldUI);
             Logger.Info?.Print(LogClass.Emulation, "Emulation was resumed.");
-
+            
             if (ConfigurationState.Instance.System.GCLowLatency)
             {
                 GCSettings.LatencyMode = GCLatencyMode.LowLatency;
@@ -976,7 +961,7 @@ namespace Ryujinx.Ava.Systems
             _playTimer.Stop();
             _viewModel.Title = TitleHelper.ActiveApplicationTitle(Device?.Processes.ActiveApplication, Program.Version, !ConfigurationState.Instance.ShowOldUI, LocaleManager.Instance[LocaleKeys.Paused]);
             Logger.Info?.Print(LogClass.Emulation, "Emulation was paused.");
-
+            
             GCSettings.LatencyMode = GCLatencyMode.Interactive;
             if (ConfigurationState.Instance.System.GCLowLatency)
             {
@@ -1137,8 +1122,6 @@ namespace Ryujinx.Ava.Systems
 
             _renderer.Window.SetSize((int)(Width * _topLevel.RenderScaling), (int)(Height * _topLevel.RenderScaling));
 
-            Ryujinx.Common.Logging.Logger.Warning?.Print(Ryujinx.Common.Logging.LogClass.Gpu, $"NX2 renderer: run loop started (active={_isActive})");
-
             _chrono.Start();
 
             Device.Gpu.Renderer.RunLoop(() =>
@@ -1168,14 +1151,8 @@ namespace Ryujinx.Ava.Systems
                             if (!_renderingStarted)
                             {
                                 _renderingStarted = true;
-                                Ryujinx.Common.Logging.Logger.Warning?.Print(Ryujinx.Common.Logging.LogClass.Gpu, "NX2 renderer: first frame consumed, switching to renderer");
                                 _viewModel.SwitchToRenderer(false);
                                 InitStatus();
-                            }
-
-                            if (++_dbgPresented <= 3)
-                            {
-                                Ryujinx.Common.Logging.Logger.Warning?.Print(Ryujinx.Common.Logging.LogClass.Gpu, $"NX2 renderer: presenting frame #{_dbgPresented}");
                             }
 
                             Device.PresentFrame(() =>

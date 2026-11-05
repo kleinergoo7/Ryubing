@@ -114,16 +114,6 @@ namespace Ryujinx.Graphics.Gpu.Engine.Threed
             {
                 MemoryManager memoryManager = _channel.MemoryManager;
 
-                // A uniform buffer bound at an address with no CPU mapping is undefined
-                // behaviour to write to; the binding is treated as unbound instead.
-                if (!memoryManager.Physical.IsMapped(_ubBeginCpuAddress))
-                {
-                    _ubFollowUpAddress = 0;
-                    _ubIndex = 0;
-
-                    return;
-                }
-
                 Span<byte> data = MemoryMarshal.Cast<int, byte>(_ubData.AsSpan(0, (int)(_ubByteCount / 4)));
 
                 if (memoryManager.Physical.WriteWithRedundancyCheck(_ubBeginCpuAddress, data))

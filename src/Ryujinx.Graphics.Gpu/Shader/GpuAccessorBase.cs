@@ -24,11 +24,6 @@ namespace Ryujinx.Graphics.Gpu.Shader
         private int _staticImagesCount;
 
         /// <summary>
-        /// Indicates that the bound shader code is a native Ampere (SM86) program.
-        /// </summary>
-        public bool IsNx2Ampere => _context.IsNx2Ampere;
-
-        /// <summary>
         /// Creates a new GPU accessor.
         /// </summary>
         /// <param name="context">GPU context</param>

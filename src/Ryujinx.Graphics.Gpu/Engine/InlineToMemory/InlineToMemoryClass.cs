@@ -153,40 +153,16 @@ namespace Ryujinx.Graphics.Gpu.Engine.InlineToMemory
         /// <param name="argument">Method call argument</param>
         public void LoadInlineData(int argument)
         {
-            if (_finished)
+            if (!_finished)
             {
-                return;
-            }
+                _buffer[_offset++] = argument;
 
-            // Switch 2 streams can send more words than the launch registers declared. Keep the
-            // data instead of failing; the declared size still decides when the transfer ends.
-            if (_offset >= _buffer.Length)
-            {
-                int newLength = Math.Max(_buffer.Length * 2, 0x1000);
-
-                Array.Resize(ref _buffer, newLength);
-
-                if (_buffer.Length > _size / sizeof(int))
+                if (_offset * 4 >= _size)
                 {
-                    _size = _buffer.Length * sizeof(int);
+                    FinishTransfer();
                 }
-
-                if (System.Threading.Interlocked.Increment(ref _inlineDataGrowLogs) <= 4)
-                {
-                    Ryujinx.Common.Logging.Logger.Warning?.Print(Ryujinx.Common.Logging.LogClass.ServiceNv,
-                        $"Switch 2 inline data exceeded the declared size; buffer grown to 0x{newLength * sizeof(int):X} bytes");
-                }
-            }
-
-            _buffer[_offset++] = argument;
-
-            if (_size > 0 && _offset * 4 >= _size)
-            {
-                FinishTransfer();
             }
         }
-
-        private static int _inlineDataGrowLogs;
 
         /// <summary>
         /// Performs actual copy of the inline data after the transfer is finished.

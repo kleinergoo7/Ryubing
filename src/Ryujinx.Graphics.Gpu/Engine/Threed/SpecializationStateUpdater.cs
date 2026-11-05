@@ -284,7 +284,7 @@ namespace Ryujinx.Graphics.Gpu.Engine.Threed
         {
             bool changed = false;
             int count = rtControl.UnpackCount();
-
+            
             Span<AttributeType> fragmentOutputTypesSpan = _graphics.FragmentOutputTypes.AsSpan();
 
             for (int index = 0; index < Constants.TotalRenderTargets; index++)
@@ -297,8 +297,8 @@ namespace Ryujinx.Graphics.Gpu.Engine.Threed
                 {
                     Format format = colorState.Format.Convert().Format;
 
-                    AttributeType type = format.IsInt
-                        ? (format.IsSignedInt ? AttributeType.Sint : AttributeType.Uint)
+                    AttributeType type = format.IsInt 
+                        ? (format.IsSignedInt ? AttributeType.Sint : AttributeType.Uint) 
                         : AttributeType.Float;
 
                     if (type != fragmentOutputTypesSpan[index])

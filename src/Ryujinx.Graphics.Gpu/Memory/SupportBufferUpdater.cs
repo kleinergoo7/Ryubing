@@ -106,7 +106,7 @@ namespace Ryujinx.Graphics.Gpu.Memory
         public void UpdateRenderScale(int index, float scale)
         {
             Span<Vector4<float>> renderScaleSpan = _data.RenderScale.AsSpan();
-
+            
             if (renderScaleSpan[1 + index].X != scale)
             {
                 renderScaleSpan[1 + index].X = scale;
@@ -137,7 +137,7 @@ namespace Ryujinx.Graphics.Gpu.Memory
         public void SetRenderTargetIsBgra(int index, bool isBgra)
         {
             Span<Vector4<int>> fragmentIsBgraSpan = _data.FragmentIsBgra.AsSpan();
-
+            
             bool isBgraChanged = fragmentIsBgraSpan[index].X != 0 != isBgra;
 
             if (isBgraChanged)

@@ -78,7 +78,7 @@ namespace Ryujinx.Graphics.Gpu.Engine.Threed.ComputeDraw
         public void SetVertexStride(int index, int stride, int componentCount)
         {
             Span<Vector4<int>> vertexStridesSpan = _data.VertexStrides.AsSpan();
-
+            
             if (vertexStridesSpan[index].X != stride)
             {
                 vertexStridesSpan[index].X = stride;
@@ -108,7 +108,7 @@ namespace Ryujinx.Graphics.Gpu.Engine.Threed.ComputeDraw
         public void SetVertexOffset(int index, int offset, int divisor)
         {
             Span<Vector4<int>> vertexOffsetsSpan = _data.VertexOffsets.AsSpan();
-
+            
             if (vertexOffsetsSpan[index].X != offset)
             {
                 vertexOffsetsSpan[index].X = offset;

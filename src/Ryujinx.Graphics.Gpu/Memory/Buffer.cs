@@ -41,7 +41,7 @@ namespace Ryujinx.Graphics.Gpu.Memory
         /// End address of the buffer in guest memory.
         /// </summary>
         public ulong EndAddress => Address + Size;
-
+        
         public Buffer Next { get; set; }
         public Buffer Previous { get; set; }
 
@@ -399,7 +399,7 @@ namespace Ryujinx.Graphics.Gpu.Memory
             {
                 return true;
             }
-
+            
             if (_referenceCount == 0)
             {
                 return false;
@@ -422,7 +422,7 @@ namespace Ryujinx.Graphics.Gpu.Memory
 
             return false;
         }
-
+        
         void SyncPreRangeAction(ulong address, ulong size)
         {
             _preFlush.CopyModified(address, size);
@@ -454,7 +454,7 @@ namespace Ryujinx.Graphics.Gpu.Memory
 
             return true;
         }
-
+        
         void SyncRangeAction(ulong address, ulong size)
         {
             _memoryTrackingGranular.RegisterAction(address, size, _externalFlushDelegate);
@@ -468,7 +468,7 @@ namespace Ryujinx.Graphics.Gpu.Memory
         public void InheritModifiedRanges(Buffer from)
         {
             from._bufferInherited = true;
-
+            
             if (from._modifiedRanges is { HasRanges: true })
             {
                 if (from._syncActionRegistered && !_syncActionRegistered)

@@ -587,7 +587,7 @@ namespace Ryujinx.Graphics.Gpu.Shader
 
             Span<TfState> tfStateSpan = state.TfState.AsSpan();
             Span<Array32<uint>> tfVaryingLocationsSpan = state.TfVaryingLocations.AsSpan();
-
+            
             for (int i = 0; i < Constants.TotalTransformFeedbackBuffers; i++)
             {
                 TfState tf = tfStateSpan[i];

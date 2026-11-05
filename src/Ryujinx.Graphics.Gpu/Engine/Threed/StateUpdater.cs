@@ -424,7 +424,7 @@ namespace Ryujinx.Graphics.Gpu.Engine.Threed
         private void UpdateTfBufferState()
         {
             Span<TfBufferState> tfBufferStateSpan = _state.State.TfBufferState.AsSpan();
-
+            
             for (int index = 0; index < Constants.TotalTransformFeedbackBuffers; index++)
             {
                 TfBufferState tfb = tfBufferStateSpan[index];
@@ -629,7 +629,7 @@ namespace Ryujinx.Graphics.Gpu.Engine.Threed
 
             Span<Rectangle<int>> regions = stackalloc Rectangle<int>[Constants.TotalViewports];
             Span<ScissorState> scissorStateSpan = _state.State.ScissorState.AsSpan();
-
+            
             for (int index = 0; index < Constants.TotalViewports; index++)
             {
                 ScissorState scissor = scissorStateSpan[index];
@@ -976,7 +976,7 @@ namespace Ryujinx.Graphics.Gpu.Engine.Threed
 
             Span<VertexAttribDescriptor> vertexAttribs = stackalloc VertexAttribDescriptor[Constants.TotalVertexAttribs];
             Span<VertexAttribState> vertexAttribStateSpan = _state.State.VertexAttribState.AsSpan();
-
+            
             for (int index = 0; index < Constants.TotalVertexAttribs; index++)
             {
                 VertexAttribState vertexAttrib = vertexAttribStateSpan[index];
@@ -1121,7 +1121,7 @@ namespace Ryujinx.Graphics.Gpu.Engine.Threed
             int drawFirstVertex = _drawState.DrawFirstVertex;
             int drawVertexCount = _drawState.DrawVertexCount;
             uint vbEnableMask = 0;
-
+            
             Span<VertexBufferState> vertexBufferStateSpan = _state.State.VertexBufferState.AsSpan();
             Span<BufferPipelineDescriptor> vertexBuffersSpan = _pipeline.VertexBuffers.AsSpan();
             Span<GpuVa> vertexBufferEndAddressSpan = _state.State.VertexBufferEndAddress.AsSpan();
@@ -1300,7 +1300,7 @@ namespace Ryujinx.Graphics.Gpu.Engine.Threed
                 Span<Boolean32> blendEnableSpan = _state.State.BlendEnable.AsSpan();
                 Span<BlendState> blendStateSpan = _state.State.BlendState.AsSpan();
                 Span<BlendDescriptor> blendDescriptorsSpan = _pipeline.BlendDescriptors.AsSpan();
-
+                
                 for (int index = 0; index < Constants.TotalRenderTargets; index++)
                 {
                     bool enable = blendEnableSpan[index];
@@ -1352,7 +1352,7 @@ namespace Ryujinx.Graphics.Gpu.Engine.Threed
                 {
                     dualSourceBlendEnabled = true;
                 }
-
+                
                 Span<BlendDescriptor> blendDescriptorsSpan = _pipeline.BlendDescriptors.AsSpan();
 
                 for (int index = 0; index < Constants.TotalRenderTargets; index++)

@@ -126,7 +126,7 @@ namespace Ryujinx.Graphics.Gpu.Memory
 
             _virtualRanges.Lock.EnterWriteLock();
             (VirtualRange first, VirtualRange last) = _virtualRanges.FindOverlapsAsNodes(gpuVa, size);
-
+            
             if (first is not null)
             {
                 // The virtual range already exists. We just need to check if our range fits inside
@@ -138,7 +138,7 @@ namespace Ryujinx.Graphics.Gpu.Memory
                 {
                     gpuVa = Math.Min(gpuVa, first.Address);
                     endAddress = Math.Max(endAddress, last.EndAddress);
-
+                    
                     _virtualRanges.RemoveRange(first, last);
 
                     ulong newSize = endAddress - gpuVa;

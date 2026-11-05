@@ -105,13 +105,6 @@ namespace Ryujinx.Graphics.Gpu
         internal Capabilities Capabilities;
 
         /// <summary>
-        /// True when the guest driver is a Switch 2 (Ampere/NVN2) driver.
-        /// Such streams bind Ampere classes and run the Turing+ MME macro ISA.
-        /// Set by the nvdrv layer once it sees an Ampere GPU device.
-        /// </summary>
-        public bool IsNx2Ampere { get; set; }
-
-        /// <summary>
         /// Event for signalling shader cache loading progress.
         /// </summary>
         public event Action<ShaderCacheState, int, int> ShaderCacheStateChanged;
@@ -179,10 +172,7 @@ namespace Ryujinx.Graphics.Gpu
                 throw new ArgumentException("The PID is invalid or the process was not registered", nameof(pid));
             }
 
-            return new MemoryManager(physicalMemory, cpuMemorySize)
-            {
-                Nx2IdentityMapping = IsNx2Ampere,
-            };
+            return new MemoryManager(physicalMemory, cpuMemorySize);
         }
 
         /// <summary>
@@ -438,7 +428,7 @@ namespace Ryujinx.Graphics.Gpu
                         SyncActions.RemoveAt(i--);
                     }
                 }
-
+                
                 for (int i = 0; i < SyncpointActions.Count; i++)
                 {
                     if (SyncpointActions[i].SyncAction(syncPoint))
