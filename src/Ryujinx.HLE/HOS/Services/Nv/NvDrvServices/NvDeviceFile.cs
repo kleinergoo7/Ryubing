@@ -1,5 +1,6 @@
 using Ryujinx.Common.Logging;
 using System;
+using System.Diagnostics;
 using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
@@ -63,24 +64,15 @@ namespace Ryujinx.HLE.HOS.Services.Nv.NvDrvServices
 
         protected static NvInternalResult CallIoctlMethod<T>(IoctlProcessor<T> callback, Span<byte> arguments) where T : struct
         {
-            if (arguments.Length != Unsafe.SizeOf<T>())
-            {
-                Logger.Warning?.Print(LogClass.ServiceNv, $"{callback.Method.Name} rejected: argument size 0x{arguments.Length:X} != expected 0x{Unsafe.SizeOf<T>():X}.");
-
-                return NvInternalResult.InvalidInput;
-            }
+            Debug.Assert(arguments.Length == Unsafe.SizeOf<T>());
 
             return PrintResult(callback.Method, callback(ref MemoryMarshal.Cast<byte, T>(arguments)[0]));
         }
 
         protected static NvInternalResult CallIoctlMethod<T, T1>(IoctlProcessorInline<T, T1> callback, Span<byte> arguments, Span<byte> inlineBuffer) where T : struct where T1 : struct
         {
-            if (arguments.Length != Unsafe.SizeOf<T>() || inlineBuffer.Length != Unsafe.SizeOf<T1>())
-            {
-                Logger.Warning?.Print(LogClass.ServiceNv, $"{callback.Method.Name} rejected: argument size 0x{arguments.Length:X} (expected 0x{Unsafe.SizeOf<T>():X}), inline size 0x{inlineBuffer.Length:X} (expected 0x{Unsafe.SizeOf<T1>():X}).");
-
-                return NvInternalResult.InvalidInput;
-            }
+            Debug.Assert(arguments.Length == Unsafe.SizeOf<T>());
+            Debug.Assert(inlineBuffer.Length == Unsafe.SizeOf<T1>());
 
             return PrintResult(callback.Method, callback(ref MemoryMarshal.Cast<byte, T>(arguments)[0], ref MemoryMarshal.Cast<byte, T1>(inlineBuffer)[0]));
         }
@@ -92,12 +84,7 @@ namespace Ryujinx.HLE.HOS.Services.Nv.NvDrvServices
 
         protected static NvInternalResult CallIoctlMethod<T, T1>(IoctlProcessorInlineSpan<T, T1> callback, Span<byte> arguments, Span<byte> inlineBuffer) where T : struct where T1 : struct
         {
-            if (arguments.Length != Unsafe.SizeOf<T>())
-            {
-                Logger.Warning?.Print(LogClass.ServiceNv, $"{callback.Method.Name} rejected: argument size 0x{arguments.Length:X} != expected 0x{Unsafe.SizeOf<T>():X}.");
-
-                return NvInternalResult.InvalidInput;
-            }
+            Debug.Assert(arguments.Length == Unsafe.SizeOf<T>());
 
             return PrintResult(callback.Method, callback(ref MemoryMarshal.Cast<byte, T>(arguments)[0], MemoryMarshal.Cast<byte, T1>(inlineBuffer)));
         }

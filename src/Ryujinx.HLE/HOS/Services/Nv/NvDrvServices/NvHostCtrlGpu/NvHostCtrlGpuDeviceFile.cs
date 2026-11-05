@@ -4,10 +4,7 @@ using Ryujinx.HLE.HOS.Services.Nv.NvDrvServices.NvHostCtrlGpu.Types;
 using Ryujinx.Horizon.Common;
 using Ryujinx.Memory;
 using System;
-using System.Buffers.Binary;
 using System.Diagnostics;
-using System.Runtime.CompilerServices;
-using System.Runtime.InteropServices;
 
 namespace Ryujinx.HLE.HOS.Services.Nv.NvDrvServices.NvHostCtrlGpu
 {
@@ -15,10 +12,6 @@ namespace Ryujinx.HLE.HOS.Services.Nv.NvDrvServices.NvHostCtrlGpu
     {
         private static readonly Stopwatch _pTimer = new();
         private static readonly double _ticksToNs = (1.0 / Stopwatch.Frequency) * 1_000_000_000;
-
-        public static bool Nx2Driver { get; private set; }
-
-        private bool _nx2Caller;
 
         private readonly KEvent _errorEvent;
         private readonly KEvent _unknownEvent;
@@ -84,8 +77,7 @@ namespace Ryujinx.HLE.HOS.Services.Nv.NvDrvServices.NvHostCtrlGpu
                 switch (command.Number)
                 {
                     case 0x05:
-                        result = GetCharacteristicsVariableSize(arguments, inlineOutBuffer);
-
+                        result = CallIoctlMethod<GetCharacteristicsArguments, GpuCharacteristics>(GetCharacteristics, arguments, inlineOutBuffer);
                         break;
                     case 0x06:
                         result = CallIoctlMethod<GetTpcMasksArguments, int>(GetTpcMasks, arguments, inlineOutBuffer);
@@ -95,34 +87,8 @@ namespace Ryujinx.HLE.HOS.Services.Nv.NvDrvServices.NvHostCtrlGpu
                         break;
                     case 0x13:
                         result = CallIoctlMethod<VsmsMappingArguments>(VsmsMapping, arguments);
-
-                        // The SDK reads one {gpc_index, tpc_index} byte pair per virtual SM from
-                        // the inline buffer and treats a pair left at its 0xc0c0 sentinel as
-                        // failure, so fill every pair: one GPC, two SMs per TPC.
-                        for (int i = 0; i + 1 < inlineOutBuffer.Length; i += 2)
-                        {
-                            inlineOutBuffer[i] = 0;
-                            inlineOutBuffer[i + 1] = (byte)(i / 4);
-                        }
-
-                        break;
-                    case 0x1F:
-                        if (_nx2Caller)
-                        {
-                            result = GetEngineInfo(arguments, inlineOutBuffer);
-                        }
                         break;
                 }
-            }
-
-            if (_nx2Caller && result == NvInternalResult.NotImplemented)
-            {
-                Logger.Warning?.Print(LogClass.ServiceNv, $"Switch 2 ctrl-gpu ioctl type={command.Type} nr=0x{command.Number:X2} stubbed");
-
-                arguments.Clear();
-                inlineOutBuffer.Clear();
-
-                return NvInternalResult.Success;
             }
 
             return result;
@@ -199,67 +165,9 @@ namespace Ryujinx.HLE.HOS.Services.Nv.NvDrvServices.NvHostCtrlGpu
             return GetCharacteristics(ref arguments, ref arguments.Characteristics);
         }
 
-        // Switch 2 passes larger buffers (0xE0 arguments / 0xD0 characteristics) than the
-        // Switch 1 layout below (0xB0 / 0xA0). Fill the known prefix from GetCharacteristics
-        // and zero the undocumented tail.
-        // WORKAROUND: characteristics past 0xA0 are undocumented on Switch 2; zero-filled
-        // and logged on every call until the real layout is known.
-        private NvInternalResult GetCharacteristicsVariableSize(Span<byte> arguments, Span<byte> inlineOutBuffer)
-        {
-            int argsSize = Unsafe.SizeOf<GetCharacteristicsArguments>();
-            int charsSize = Unsafe.SizeOf<GpuCharacteristics>();
-
-            if (arguments.Length < argsSize || inlineOutBuffer.Length < charsSize)
-            {
-                Logger.Warning?.Print(LogClass.ServiceNv, $"GetCharacteristics rejected: argument size 0x{arguments.Length:X}, inline size 0x{inlineOutBuffer.Length:X} (need 0x{argsSize:X}/0x{charsSize:X}).");
-
-                return NvInternalResult.InvalidInput;
-            }
-
-            if (arguments.Length > argsSize || inlineOutBuffer.Length > charsSize)
-            {
-                Logger.Warning?.Print(LogClass.ServiceNv, $"GetCharacteristics Switch 2 sizes: argument size 0x{arguments.Length:X}, inline size 0x{inlineOutBuffer.Length:X}; zero-filling characteristics past 0x{charsSize:X}.");
-            }
-
-            NvInternalResult result = CallIoctlMethod<GetCharacteristicsArguments, GpuCharacteristics>(GetCharacteristics, arguments[..argsSize], inlineOutBuffer[..charsSize]);
-
-            if (result != NvInternalResult.Success)
-            {
-                return result;
-            }
-
-            inlineOutBuffer[charsSize..].Clear();
-
-            if (_nx2Caller && inlineOutBuffer.Length >= 0xb8)
-            {
-                // NvRm sizes each TSG's subcontext (VEID) allocator from the u32 at +0xb4
-                // when flags bits 8 and 22 are set; otherwise a second queue's
-                // NvRmGpuTSGSubcontextCreate fails (0x11) and its NVN command buffer stays unallocated.
-                BinaryPrimitives.WriteUInt32LittleEndian(inlineOutBuffer[0xb4..], 64);
-            }
-
-            return result;
-        }
-
         private NvInternalResult GetCharacteristics(ref GetCharacteristicsArguments arguments, ref GpuCharacteristics characteristics)
         {
-            bool nx2 = arguments.Header.BufferSize >= 0xD0;
-
-            _nx2Caller |= nx2;
-            Nx2Driver |= nx2;
-
-            if (nx2)
-            {
-                Context.Device.Gpu.IsNx2Ampere = true;
-            }
-
-            arguments.Header.BufferSize = nx2 ? 0xD0 : 0xa0;
-
-            if (nx2)
-            {
-                // NvRm treats a zero buffer address as "no characteristics were written".
-                arguments.Header.BufferAddress = 0xdeadbeef;
-            }
+            arguments.Header.BufferSize = 0xa0;
 
 #pragma warning disable IDE0055 // Disable formatting
             characteristics.Arch                   = 0x120;
@@ -297,69 +205,9 @@ namespace Ryujinx.HLE.HOS.Services.Nv.NvDrvServices.NvHostCtrlGpu
             characteristics.RopL2EnMask1           = 0x0;
             characteristics.ChipName               = 0x6230326d67;
             characteristics.GrCompbitStoreBaseHw   = 0x0;
-
-            if (nx2)
-            {
-                // Switch 2 NvRm rejects Maxwell; report an Ampere chip (0x17E).
-                characteristics.Arch            = 0x170;
-                characteristics.Impl            = 0xE;
-                characteristics.NumTpcPerGpc    = 0x6;
-                characteristics.SmArchSmVersion = 0x808;
-                characteristics.SmArchSpaVersion = 0x808;
-                characteristics.ThreedClass     = 0xC797;
-                characteristics.ComputeClass    = 0xC7C0;
-                characteristics.GpfifoClass     = 0xC56F;
-                characteristics.DmaCopyClass    = 0xC7B5;
-                characteristics.ChipName        = 0x6631306167;
-                characteristics.Flags          |= 0x100;          // SUPPORT_TSG
-                characteristics.Flags          |= 1L << 22;      // SUPPORT_TSG_SUBCONTEXTS: NvRm sizes each TSG's VEID allocator from the +0xb4 u32
-                characteristics.Flags          |= 1L << 34;      // SUPPORT_MAPPING_MODIFY: NvRm switches a compressible pool's mapping to the texture's kind
-                characteristics.Flags          |= 1L << 26;      // SUPPORT_SYNCPOINT_ADDRESS (shim)
-                characteristics.Flags          |= 1L << 35;      // SUPPORT_REMAP: without it NvRm fails every remap before asking the server
-                characteristics.Flags          |= 0x1FL << 40;   // engine support bits: 2D, 3D, compute, inline-to-memory, ZBC; the SDK filters its class enumeration by them
-
-                // Nine s16 interface versions at 0x70..0x80.
-                ref byte raw = ref Unsafe.As<GpuCharacteristics, byte>(ref characteristics);
-
-                for (int offset = 0x70; offset <= 0x80; offset += 2)
-                {
-                    BinaryPrimitives.WriteInt16LittleEndian(MemoryMarshal.CreateSpan(ref Unsafe.Add(ref raw, offset), 2), 0x40);
-                }
-            }
 #pragma warning restore IDE0055
 
             arguments.Characteristics = characteristics;
-
-            return NvInternalResult.Success;
-        }
-
-        private static NvInternalResult GetEngineInfo(Span<byte> arguments, Span<byte> inlineOutBuffer)
-        {
-            uint bufSize = arguments.Length >= 4 ? BinaryPrimitives.ReadUInt32LittleEndian(arguments) : 0;
-            const uint Needed = 2 * 16;
-
-            if (bufSize >= Needed && inlineOutBuffer.Length >= Needed)
-            {
-                Span<byte> items = inlineOutBuffer[..(int)Needed];
-                items.Clear();
-
-                BinaryPrimitives.WriteUInt32LittleEndian(items[0..], 0);  // GR
-                BinaryPrimitives.WriteUInt32LittleEndian(items[4..], 0);
-                BinaryPrimitives.WriteInt32LittleEndian(items[8..], 0);
-                BinaryPrimitives.WriteUInt32LittleEndian(items[12..], 0);
-
-                BinaryPrimitives.WriteUInt32LittleEndian(items[16..], 2); // async copy
-                BinaryPrimitives.WriteUInt32LittleEndian(items[20..], 0);
-                BinaryPrimitives.WriteInt32LittleEndian(items[24..], 1);
-                BinaryPrimitives.WriteUInt32LittleEndian(items[28..], 0);
-            }
-
-            arguments.Clear();
-
-            if (arguments.Length >= 4)
-            {
-                BinaryPrimitives.WriteUInt32LittleEndian(arguments, Needed);
-            }
 
             return NvInternalResult.Success;
         }

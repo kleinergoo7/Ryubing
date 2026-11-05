@@ -433,14 +433,5 @@ namespace Ryujinx.HLE.HOS.Services.Am.AppletAE.AllSystemAppletProxiesService.Sys
 
             return ResultCode.Success;
         }
-
-        [CommandCmif(2000)]
-        // Switch 2 graphics system session, stubbed until the gsv protocol is ported.
-        public ResultCode GetNx2GraphicsSystemSession(ServiceCtx context)
-        {
-            MakeSessionObject(context, new INx2GraphicsSystemSession());
-
-            return ResultCode.Success;
-        }
     }
 }

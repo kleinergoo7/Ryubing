@@ -3,7 +3,6 @@ using Ryujinx.Graphics.Gpu;
 using Ryujinx.Graphics.Gpu.Memory;
 using Ryujinx.HLE.HOS.Services.Nv.NvDrvServices.NvHostChannel.Types;
 using Ryujinx.HLE.HOS.Services.Nv.NvDrvServices.NvHostCtrl;
-using Ryujinx.HLE.HOS.Services.Nv.NvDrvServices.NvHostCtrlGpu;
 using Ryujinx.HLE.HOS.Services.Nv.NvDrvServices.NvMap;
 using Ryujinx.HLE.HOS.Services.Nv.Types;
 using Ryujinx.Memory;
@@ -47,12 +46,6 @@ namespace Ryujinx.HLE.HOS.Services.Nv.NvDrvServices.NvHostChannel
         protected static ResourcePolicy ChannelResourcePolicy = ResourcePolicy.Device;
 
         private NvFence _channelSyncpoint;
-
-        protected NvFence ChannelSyncpoint => _channelSyncpoint;
-
-        private static int ProcLogCount;
-
-        protected Switch HostDevice => _device;
 
         public NvHostChannelDeviceFile(ServiceCtx context, IVirtualMemoryManager memory, ulong owner) : base(context, owner)
         {
@@ -340,29 +333,6 @@ namespace Ryujinx.HLE.HOS.Services.Nv.NvDrvServices.NvHostChannel
 
         private NvInternalResult AllocObjCtx(ref AllocObjCtxArguments arguments)
         {
-            if (NvHostCtrlGpuDeviceFile.Nx2Driver)
-            {
-                // Switch 2 NvRm asks for Ampere classes, or class 0 (it reads the class numbers
-                // from a characteristics layout we don't know yet). Map them onto the Maxwell
-                // engine slots this emulator knows.
-                uint mapped = arguments.ClassNumber switch
-                {
-                    0xC797 or 0xC697 or 0xC597 => 0xB197, // 3D
-                    0xC7C0 or 0xC6C0 or 0xC5C0 => 0xB1C0, // compute
-                    0xC7B5 or 0xC6B5 or 0xC5B5 => 0xB0B5, // DMA copy
-                    0xC56F or 0xC76F => 0xB06F, // channel GPFIFO
-                    0 => 0xB197, // first free engine slot
-                    _ => arguments.ClassNumber,
-                };
-
-                if (mapped != arguments.ClassNumber)
-                {
-                    Logger.Warning?.Print(LogClass.ServiceNv, $"Switch 2 object class 0x{arguments.ClassNumber:X} -> 0x{mapped:X}");
-
-                    arguments.ClassNumber = mapped;
-                }
-            }
-
             Logger.Stub?.PrintStub(LogClass.ServiceNv);
 
             return NvInternalResult.Success;
@@ -451,64 +421,11 @@ namespace Ryujinx.HLE.HOS.Services.Nv.NvDrvServices.NvHostChannel
             return NvInternalResult.Success;
         }
 
-        private static int _nx2SubmitLogs;
-
-        private static int _fenceLogs;
-
         protected NvInternalResult SubmitGpfifo(ref SubmitGpfifoArguments header, Span<ulong> entries)
         {
-            bool nx2 = NvHostCtrlGpuDeviceFile.Nx2Driver;
-
-            // WORKAROUND: Switch 2 nvhost allows waiting on a fence and incrementing in one
-            // submission; older (Switch 1) nvhost rejects that combination. Accepted on faith
-            // from observed guest traffic; re-check against hardware behavior if submits misbehave.
-            if (!nx2 &&
-                header.Flags.HasFlag(SubmitGpfifoFlags.FenceWait) &&
-                header.Flags.HasFlag(SubmitGpfifoFlags.IncrementWithValue))
+            if (header.Flags.HasFlag(SubmitGpfifoFlags.FenceWait) && header.Flags.HasFlag(SubmitGpfifoFlags.IncrementWithValue))
             {
                 return NvInternalResult.InvalidInput;
-            }
-
-            if (nx2)
-            {
-                System.Threading.Interlocked.Increment(ref Ryujinx.HLE.HOS.Services.Am.AppletAE.AllSystemAppletProxiesService.SystemAppletProxy.Nx2Counters.Submits);
-            }
-
-            Ryujinx.HLE.HOS.Kernel.Threading.KThread caller = Ryujinx.HLE.HOS.Kernel.KernelStatic.GetCurrentThread();
-            ulong callerPc = caller?.Context.Pc ?? 0;
-
-            if (System.Environment.GetEnvironmentVariable("NX2_WAIT_LOG") == "1")
-            {
-                Ryujinx.Common.Logging.Logger.Warning?.Print(LogClass.ServiceNv,
-                    $"NX2 submit caller={caller?.Owner.Pid} tid={caller?.ThreadUid}");
-            }
-
-            if (System.Threading.Interlocked.Increment(ref ProcLogCount) == 1)
-            {
-                foreach (System.Collections.Generic.KeyValuePair<ulong, Ryujinx.HLE.HOS.Kernel.Process.KProcess> entry in _device.System.KernelContext.Processes)
-                {
-                    Logger.Warning?.Print(LogClass.ServiceNv, $"NX2 proc pid={entry.Key} name={entry.Value.Name} threads={string.Join(',', System.Linq.Enumerable.Select(entry.Value.DebugThreads, t => t.ThreadUid.ToString()))}");
-                }
-            }
-
-            Logger.Info?.Print(LogClass.ServiceNv, $"SubmitGpfifo flags={header.Flags} fence=({header.Fence.Id}, {header.Fence.Value}) entries=0x{entries.Length:X} address=0x{header.Address:X} first=0x{(entries.Length > 0 ? entries[0] : 0):X} nx2={nx2} pc=0x{callerPc:X}");
-
-            if (System.Environment.GetEnvironmentVariable("NX2_SUBMIT_LOG") == "1")
-            {
-                int submitIndex = System.Threading.Interlocked.Increment(ref _nx2SubmitLogs);
-
-                if (submitIndex <= 40)
-                {
-                    System.Text.StringBuilder words = new();
-
-                    for (int i = 0; i < entries.Length && i < 6; i++)
-                    {
-                        words.Append($"{entries[i]:X16} ");
-                    }
-
-                    Ryujinx.Common.Logging.Logger.Warning?.Print(LogClass.ServiceNv,
-                        $"NX2 submit #{submitIndex} owner={Owner} chan={Channel?.GetHashCode():X8} tid={caller?.ThreadUid}({caller?.GetThreadName()}) pc=0x{callerPc:X} flags={header.Flags} fence=({header.Fence.Id},{header.Fence.Value}) entries={entries.Length} words=[{words}]");
-                }
             }
 
             if (header.Flags.HasFlag(SubmitGpfifoFlags.FenceWait) && !_device.System.HostSyncpoint.IsSyncpointExpired(header.Fence.Id, header.Fence.Value))
@@ -518,11 +435,9 @@ namespace Ryujinx.HLE.HOS.Services.Nv.NvDrvServices.NvHostChannel
 
             header.Fence.Id = _channelSyncpoint.Id;
 
-            uint incrementCount = 0;
-
             if (header.Flags.HasFlag(SubmitGpfifoFlags.FenceIncrement) || header.Flags.HasFlag(SubmitGpfifoFlags.IncrementWithValue))
             {
-                incrementCount = header.Flags.HasFlag(SubmitGpfifoFlags.FenceIncrement) ? 2u : 0u;
+                uint incrementCount = header.Flags.HasFlag(SubmitGpfifoFlags.FenceIncrement) ? 2u : 0u;
 
                 if (header.Flags.HasFlag(SubmitGpfifoFlags.IncrementWithValue))
                 {
@@ -536,70 +451,19 @@ namespace Ryujinx.HLE.HOS.Services.Nv.NvDrvServices.NvHostChannel
                 header.Fence.Value = _device.System.HostSyncpoint.ReadSyncpointMaxValue(header.Fence.Id);
             }
 
-            // Capped submit-fence trace: which host syncpoint each submit bumps and to
-            // what value. The game's render loop stalls when a waited fence never moves.
-            if (System.Environment.GetEnvironmentVariable("NX2_SUBMIT_LOG") == "1" &&
-                System.Threading.Interlocked.Increment(ref _fenceLogs) <= 40)
-            {
-                Ryujinx.Common.Logging.Logger.Warning?.Print(LogClass.ServiceNv,
-                    $"NX2 submit fence chan={Channel?.GetHashCode():X8} sp={header.Fence.Id} value={header.Fence.Value} inc={incrementCount}");
-            }
-
-            if (nx2)
-            {
-                // Switch 2 GPFIFO entries are 64-bit command list headers: bits 0..39 GPU
-                // address, bits 42..62 size in words, bit 63 sync. Convert them to the Maxwell
-                // GPEntry the emulator's FIFO understands.
-                ulong[] translated = new ulong[entries.Length];
-
-                for (int i = 0; i < entries.Length; i++)
-                {
-                    ulong raw = entries[i];
-
-                    Logger.Info?.Print(LogClass.ServiceNv, $"NX2 entry[{i}]=0x{raw:X16} addr=0x{raw & 0xFFFFFFFFFFUL:X} len=0x{(raw >> 42) & 0x1F_FFFF:X}");
-                    ulong address = raw & 0xFF_FFFF_FFFFUL;
-                    uint length = (uint)((raw >> 42) & 0x1F_FFFF);
-                    uint sync = (uint)(raw >> 63);
-
-                    translated[i] = (address & 0xFFFF_FFFCUL) |
-                                    ((((address >> 32) & 0xFF) |
-                                      ((ulong)length << 10) |
-                                      ((ulong)sync << 31)) << 32);
-                }
-
-                Channel.PushEntries(translated);
-            }
-            else
-            {
-                Channel.PushEntries(entries);
-            }
+            Channel.PushEntries(entries);
 
             if (header.Flags.HasFlag(SubmitGpfifoFlags.FenceIncrement))
             {
                 Channel.PushHostCommandBuffer(CreateIncrementCommandBuffer(ref header.Fence, header.Flags));
-            }
-            else if (nx2 && incrementCount > 0)
-            {
-                // Switch 2 pushbuffers signal completion with semaphore releases, never host1x
-                // syncpoint methods, but the driver still raises the syncpoint max by the
-                // submission's increment value and waits for it. Append the increments.
-                Channel.PushHostCommandBuffer(CreateIncrementCountCommandBuffer(ref header.Fence, incrementCount));
             }
 
             header.Flags = SubmitGpfifoFlags.None;
 
             _device.Gpu.GPFifo.SignalNewEntries();
 
-            OnSubmission();
-
             return NvInternalResult.Success;
         }
-
-        /// <summary>
-        /// Called after a GPFIFO submission was queued, so Switch 2 paths can report completion
-        /// to the guest's event pool.
-        /// </summary>
-        protected virtual void OnSubmission() { }
 
         public uint GetSyncpointChannel(uint index, bool isClientManaged)
         {
@@ -674,30 +538,6 @@ namespace Ryujinx.HLE.HOS.Services.Nv.NvDrvServices.NvHostChannel
             // SyncpointAction(fence.id, increment: true, switch_en: false);
             commandBuffer[offset++] = 0x2001001D;
             commandBuffer[offset++] = (((int)fence.Id << 8) | (1 << 0) | (0 << 4));
-
-            return commandBuffer;
-        }
-
-        private int[] CreateIncrementCountCommandBuffer(ref NvFence fence, uint count)
-        {
-            int[] commandBuffer = new int[4 + (int)count * 2];
-
-            int offset = 0;
-
-            // WaitForIdle(handle)
-            commandBuffer[offset++] = 0x2001001E;
-            commandBuffer[offset++] = 0x0;
-
-            // SyncpointValue = 0x0;
-            commandBuffer[offset++] = 0x2001001C;
-            commandBuffer[offset++] = 0x0;
-
-            for (uint i = 0; i < count; i++)
-            {
-                // SyncpointAction(fence.id, increment: true, switch_en: false);
-                commandBuffer[offset++] = 0x2001001D;
-                commandBuffer[offset++] = (((int)fence.Id << 8) | (1 << 0) | (0 << 4));
-            }
 
             return commandBuffer;
         }

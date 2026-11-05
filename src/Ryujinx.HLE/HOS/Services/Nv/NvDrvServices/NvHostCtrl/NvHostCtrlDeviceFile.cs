@@ -123,8 +123,6 @@ namespace Ryujinx.HLE.HOS.Services.Nv.NvDrvServices.NvHostCtrl
         {
             eventHandle = QueryEvent(eventId);
 
-            Logger.Debug?.Print(LogClass.ServiceNv, $"nvhost-ctrl QueryEvent id=0x{eventId:X8} handle={eventHandle}");
-
             return eventHandle != 0 ? NvInternalResult.Success : NvInternalResult.InvalidInput;
         }
 
@@ -216,8 +214,6 @@ namespace Ryujinx.HLE.HOS.Services.Nv.NvDrvServices.NvHostCtrl
 
         private NvInternalResult EventRegister(ref uint userEventId)
         {
-            Logger.Debug?.Print(LogClass.ServiceNv, $"nvhost-ctrl EventRegister id=0x{userEventId:X8}");
-
             lock (_events)
             {
                 NvInternalResult result = EventUnregister(ref userEventId);
